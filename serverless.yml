@@ -1,0 +1,219 @@
+service: semantic-slack-bot
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: us-east-1
+  stage: prod
+  memorySize: 512
+  timeout: 30
+  environment:
+    SLACK_BOT_TOKEN: ${file(env.json):SLACK_BOT_TOKEN}
+    SLACK_SIGNING_SECRET: ${file(env.json):SLACK_SIGNING_SECRET}
+    OPENAI_API_KEY: ${file(env.json):OPENAI_API_KEY}
+    REDIS_URL: ${file(env.json):REDIS_URL}
+    REDIS_PASSWORD: ${file(env.json):REDIS_PASSWORD}
+    GOOGLE_CLIENT_ID: ${file(env.json):GOOGLE_CLIENT_ID}
+    GOOGLE_CLIENT_SECRET: ${file(env.json):GOOGLE_CLIENT_SECRET}
+    GOOGLE_REDIRECT_URI: ${file(env.json):GOOGLE_REDIRECT_URI}
+    INTERNAL_API_KEY: ${file(env.json):INTERNAL_API_KEY}
+    USERS_TABLE: ${self:custom.usersTable}
+    WORKSPACES_TABLE: ${self:custom.workspacesTable}
+    ENGRAMS_TABLE: ${self:custom.engramsTable}
+    BUG_REPORTS_TABLE: ${self:custom.bugReportsTable}
+    CALENDAR_TOKENS_TABLE: ${self:custom.calendarTokensTable}
+    MEETINGS_TABLE: ${self:custom.meetingsTable}
+    AREA_EXPERTISE_TABLE: ${self:custom.areaExpertiseTable}
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+        - dynamodb:GetItem
+        - dynamodb:UpdateItem
+        - dynamodb:DeleteItem
+        - dynamodb:Query
+        - dynamodb:Scan
+      Resource:
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.usersTable}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.workspacesTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.engramsTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.engramsTable}/index/*"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.bugReportsTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.calendarTokensTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.meetingsTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.areaExpertiseTable}"
+        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.areaExpertiseTable}/index/*"
+
+custom:
+  timestamp: ${self:provider.stage}-20250720
+  usersTable: SemanticUsers-${self:provider.stage}
+  workspacesTable: SemanticWorkspaces-${self:provider.stage}
+  engramsTable: SemanticEngrams-${self:provider.stage}
+  bugReportsTable: SemanticBugReports-${self:provider.stage}
+  calendarTokensTable: SemanticCalendarTokens-${self:provider.stage}
+  meetingsTable: SemanticMeetings-${self:provider.stage}
+  areaExpertiseTable: SemanticAreaExpertise-${self:provider.stage}
+
+functions:
+  slackBot:
+    handler: src/index.handler
+    description: Updated at ${self:custom.timestamp}
+    events:
+      - http:
+          path: /slack/events
+          method: post
+          cors: true
+      - http:
+          path: /messages
+          method: get
+          cors: true
+      - http:
+          path: /users
+          method: get
+          cors: true
+      - http:
+          path: /memory
+          method: get
+          cors: true
+      - http:
+          path: /message
+          method: post
+          cors: true
+      - http:
+          path: /create-bot
+          method: post
+          cors: true
+      - http:
+          path: /bugs
+          method: get
+          cors: true
+      - http:
+          path: /health
+          method: get
+          cors: true
+      - http:
+          path: /auth/google
+          method: get
+          cors: true
+      - http:
+          path: /auth/google/callback
+          method: get
+          cors: true
+
+plugins:
+  - serverless-plugin-typescript
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.usersTable}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    WorkspacesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.workspacesTable}
+        AttributeDefinitions:
+          - AttributeName: workspaceId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: workspaceId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    EngramsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.engramsTable}
+        AttributeDefinitions:
+          - AttributeName: engramId
+            AttributeType: S
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: engramId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: userId-createdAt-index
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+
+    BugReportsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.bugReportsTable}
+        AttributeDefinitions:
+          - AttributeName: bugId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: bugId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    CalendarTokensTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.calendarTokensTable}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    MeetingsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.meetingsTable}
+        AttributeDefinitions:
+          - AttributeName: meetingId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: meetingId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+
+    AreaExpertiseTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.areaExpertiseTable}
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: area
+            AttributeType: S
+          - AttributeName: count
+            AttributeType: N
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: area
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: area-count-index
+            KeySchema:
+              - AttributeName: area
+                KeyType: HASH
+              - AttributeName: count
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
