@@ -43,6 +43,7 @@ export async function messageHandler({
   const channelId = message.channel || '';
   const threadTs = message.thread_ts || message.ts;
   const text = message.text || '';
+  const isThreadReply = message.thread_ts && message.thread_ts !== message.ts;
 
   // Skip if no user ID (shouldn't happen for real messages)
   if (!userId) {
@@ -51,30 +52,63 @@ export async function messageHandler({
   }
 
   try {
-    // Pre-filter check
-    const channelType = message.channel_type || (channelId.startsWith('D') ? 'im' : 'channel');
-    let botUserId = await redisService.getShortTermMemory('bot:userId') as string | undefined;
-    
-    if (!botUserId) {
-      const authTest = await client.auth.test();
-      botUserId = authTest.user_id || undefined;
-      if (botUserId) {
-        await redisService.setShortTermMemory('bot:userId', botUserId, 86400);
+    // Check if this is a reply in an active bug triage thread
+    if (isThreadReply) {
+      const bugTriageState = await redisService.getBugTriageState(userId, message.thread_ts!);
+      if (bugTriageState) {
+        console.log('Message is part of active bug triage thread, processing...');
+        // Skip pre-filter for active bug triage threads
+      } else {
+        // Apply normal pre-filter for non-bug-triage thread replies
+        const channelType = message.channel_type || (channelId.startsWith('D') ? 'im' : 'channel');
+        let botUserId = await redisService.getShortTermMemory('bot:userId') as string | undefined;
+        
+        if (!botUserId) {
+          const authTest = await client.auth.test();
+          botUserId = authTest.user_id || undefined;
+          if (botUserId) {
+            await redisService.setShortTermMemory('bot:userId', botUserId, 86400);
+          }
+        }
+        
+        if (!shouldProcessMessage(text, channelType, botUserId)) {
+          console.log(`Thread reply does not require processing. Text: "${text}", Channel type: ${channelType}`);
+          return;
+        }
       }
-    }
-    
-    if (!shouldProcessMessage(text, channelType, botUserId)) {
-      console.log(`Message does not require processing. Text: "${text}", Channel type: ${channelType}, Bot mentioned: ${botUserId && text.includes(`<@${botUserId}>`)}`);
-      return;
+    } else {
+      // Pre-filter check for non-thread messages
+      const channelType = message.channel_type || (channelId.startsWith('D') ? 'im' : 'channel');
+      let botUserId = await redisService.getShortTermMemory('bot:userId') as string | undefined;
+      
+      if (!botUserId) {
+        const authTest = await client.auth.test();
+        botUserId = authTest.user_id || undefined;
+        if (botUserId) {
+          await redisService.setShortTermMemory('bot:userId', botUserId, 86400);
+        }
+      }
+      
+      if (!shouldProcessMessage(text, channelType, botUserId)) {
+        console.log(`Message does not require processing. Text: "${text}", Channel type: ${channelType}, Bot mentioned: ${botUserId && text.includes(`<@${botUserId}>`)}`);
+        return;
+      }
     }
 
     // STEP 1: Classify intent using AI
     const recentMessages = await redisService.getRecentMessages(channelId, 5);
+    
+    // Check if we're in a bug triage thread for context
+    const hasBugTriage = isThreadReply ? 
+      await redisService.getBugTriageState(userId, message.thread_ts!) !== null : 
+      false;
+    
     const intent = await intentClassifier.classifyIntent({
       message: text,
       userId,
       channelId,
-      recentContext: recentMessages.map(m => m.text)
+      recentContext: recentMessages.map(m => m.text),
+      threadContext: { hasBugTriage }
     });
 
     console.log(`Intent classified: ${intent.intent} (confidence: ${intent.confidence}, model: ${intent.modelUsed})`);
@@ -98,11 +132,21 @@ export async function messageHandler({
     const response = await agentRegistry.routeToAgent(context, say);
 
     if (!response) {
-      // No agent could handle this intent - fallback to general response
-      await say({
-        text: "I'm not sure how to help with that. Try asking about scheduling meetings, reporting bugs, or creating tasks.",
-        thread_ts: threadTs
-      });
+      // No agent could handle this intent
+      // Check if this is a message that requires no response
+      const noResponseIntents = ['general.chatter', 'irrelevant', 'casual_conversation', 'off_topic'];
+      if (intent.intent && noResponseIntents.includes(intent.intent)) {
+        console.log('Message classified as not requiring response:', intent.intent);
+        return;
+      }
+      
+      // Only respond if confidence is high enough that user expects a response
+      if (intent.confidence > 0.6) {
+        await say({
+          text: "I'm not sure how to help with that. Try asking about scheduling meetings, reporting bugs, or creating tasks.",
+          thread_ts: threadTs
+        });
+      }
       return;
     }
 

@@ -14,6 +14,8 @@ const BUG_TRIAGE_CONFIG: AgentConfig = {
     'bug.report',
     'bug.triage',
     'bug.finalize',
+    'bug.response',
+    'bug.cancel',
     'issue.report',
     'problem.report',
     'error.report'
@@ -65,6 +67,24 @@ export class BugTriageAgent extends BaseAgent {
       }
     }
 
+    // Check if this is a cancel request
+    if (intent.intent === 'bug.cancel' || intent.intent === 'general.cancel') {
+      const existingState = await redisService.getBugTriageState(userId, threadTs) as EnhancedBugTriageState | null;
+      if (existingState) {
+        // Clear the bug triage state
+        await redisService.deleteShortTermMemory(`bug-triage:${userId}:${threadTs}`);
+        await say({
+          text: "✅ Bug report cancelled. Feel free to report a new bug anytime!",
+          thread_ts: threadTs
+        });
+        return {
+          text: "Bug report cancelled",
+          threadTs,
+          shouldStore: false
+        };
+      }
+    }
+    
     // Check if this is a continuation of an existing bug triage
     const existingState = await redisService.getBugTriageState(userId, threadTs) as EnhancedBugTriageState | null;
     if (existingState && existingState.step !== 'complete') {
@@ -145,6 +165,9 @@ export class BugTriageAgent extends BaseAgent {
     // Need more information - ask intelligent follow-ups
     const followUpQuestions = initialAnalysis.followUpQuestions.slice(0, 2);
     
+    console.log('Initial analysis:', JSON.stringify(initialAnalysis, null, 2));
+    console.log('Follow-up questions:', followUpQuestions);
+    
     await say({
       text: `🐛 I've detected a bug report. Let me help you provide the information our developers need.`,
       thread_ts: threadTs,
@@ -166,13 +189,19 @@ export class BugTriageAgent extends BaseAgent {
             text: "*To help our team fix this quickly, I need a bit more information:*"
           }
         },
-        ...followUpQuestions.map((question, index) => ({
+        ...(followUpQuestions.length > 0 ? followUpQuestions.map((question, index) => ({
           type: "section",
           text: {
             type: "mrkdwn",
             text: `${index + 1}. ${question}`
           }
-        }))
+        })) : [{
+          type: "section",
+          text: {
+            type: "mrkdwn",
+            text: "Please provide more details about:\n• When does this occur?\n• What are the steps to reproduce?\n• What browser/device are you using?"
+          }
+        }])
       ]
     });
 
@@ -485,6 +514,7 @@ Respond in JSON format.`;
       confidence: state.confidence,
       status: 'open' as const,
       createdAt: new Date().toISOString(),
+      reportedBy: state.userId,
       conversations: {
         questions: state.previousQuestions,
         responses: state.userResponses

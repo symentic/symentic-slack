@@ -14,8 +14,13 @@ export interface BugReport {
   completenessScore: number;
   qualityRating: number;
   confidence: number;
-  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+  status: 'open' | 'in_progress' | 'resolved' | 'closed' | 'triaged';
   createdAt: string;
+  updatedAt?: string;
+  reportedBy: string;
+  assignedTo?: string[];
+  triageChannel?: string;
+  meetingId?: string;
   conversations: {
     questions: string[];
     responses: string[];

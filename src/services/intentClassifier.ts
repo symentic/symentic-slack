@@ -46,8 +46,8 @@ export class IntentClassifier {
     return 'gpt-3.5-turbo';
   }
 
-  async classifyIntent(options: ClassificationOptions): Promise<IntentResult> {
-    const { message, userId, channelId, recentContext } = options;
+  async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
+    const { message, userId, channelId, recentContext, threadContext } = options;
     const model = this.selectModel(message);
 
     const systemPrompt = `You are an intent classifier for a Slack bot. Analyze the message and extract:
@@ -58,18 +58,24 @@ export class IntentClassifier {
 
 Available intents:
 - calendar.schedule, calendar.check, calendar.cancel, calendar.reschedule
-- bug.report, bug.status, bug.update
+- bug.report, bug.status, bug.update, bug.response, bug.cancel
 - task.create, task.assign, task.status, task.complete
 - reminder.set, reminder.list
-- general.help, general.status, general.greeting
+- general.help, general.status, general.greeting, general.chatter, general.cancel
 - query.search, query.ask
+
+Special handling:
+- If in a thread with active bug triage, classify follow-ups as "bug.response"
+- Casual conversation or off-topic messages should be "general.chatter"
+- "Cancel" or "stop" should map to appropriate cancel intent
 
 Respond in JSON format only.`;
 
     const userPrompt = `Message: "${message}"
 User: ${userId}
 Channel: ${channelId}
-${recentContext ? `Recent context: ${recentContext.join(' | ')}` : ''}`;
+${recentContext ? `Recent context: ${recentContext.join(' | ')}` : ''}
+${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}`;
 
     try {
       const response = await openAIService.classifyWithModel(

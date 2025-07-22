@@ -1,0 +1,199 @@
+Comment: Bug Triage Workflow for Semantic Slack Bot
+StartAt: AnalyzeBugReport
+States:
+  AnalyzeBugReport:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugAnalyzeLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      context.$: $.context
+    ResultPath: $.analysis
+    Next: CheckReportQuality
+  
+  CheckReportQuality:
+    Type: Choice
+    Choices:
+      - Variable: $.analysis.completenessScore
+        NumericGreaterThanEquals: 80
+        Next: FindRelevantEngineers
+    Default: GenerateFollowUpQuestions
+  
+  GenerateFollowUpQuestions:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugQuestionsLambdaFunction, Arn]
+    Parameters:
+      analysis.$: $.analysis
+      bugReport.$: $.bugReport
+      attemptCount.$: $.attemptCount
+    ResultPath: $.questions
+    Next: SendQuestionsToSlack
+  
+  SendQuestionsToSlack:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [SlackNotifyLambdaFunction, Arn]
+    Parameters:
+      action: sendBugQuestions
+      questions.$: $.questions
+      context.$: $.context
+      threadTs.$: $.threadTs
+    Next: WaitForUserResponse
+  
+  WaitForUserResponse:
+    Type: Task
+    Resource: arn:aws:states:::sqs:sendMessage.waitForTaskToken
+    Parameters:
+      QueueUrl:
+        Ref: BugResponseQueue
+      MessageBody:
+        taskToken.$: $$.Task.Token
+        executionArn.$: $$.Execution.Id
+        bugId.$: $.bugId
+        userId.$: $.context.userId
+        threadTs.$: $.threadTs
+    TimeoutSeconds: 3600
+    Catch:
+      - ErrorEquals: [States.TaskFailed, States.Timeout]
+        Next: HandleTimeout
+    Next: ProcessUserResponse
+  
+  ProcessUserResponse:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugProcessResponseLambdaFunction, Arn]
+    Parameters:
+      response.$: $.userResponse
+      bugReport.$: $.bugReport
+      analysis.$: $.analysis
+    ResultPath: $.processedResponse
+    Next: CheckIfCancelled
+  
+  CheckIfCancelled:
+    Type: Choice
+    Choices:
+      - Variable: $.processedResponse.action
+        StringEquals: cancel
+        Next: CancelBugReport
+    Default: UpdateBugReport
+  
+  CancelBugReport:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [SlackNotifyLambdaFunction, Arn]
+    Parameters:
+      action: cancelBugReport
+      context.$: $.context
+      threadTs.$: $.threadTs
+    Next: BugReportCancelled
+  
+  BugReportCancelled:
+    Type: Succeed
+  
+  UpdateBugReport:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugUpdateLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      newInfo.$: $.processedResponse.extractedInfo
+    ResultPath: $.bugReport
+    Next: IncrementAttempt
+  
+  IncrementAttempt:
+    Type: Pass
+    Parameters:
+      attemptCount.$: States.MathAdd($.attemptCount, 1)
+    ResultPath: $.attemptCount
+    Next: AnalyzeBugReport
+  
+  HandleTimeout:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [SlackNotifyLambdaFunction, Arn]
+    Parameters:
+      action: timeoutNotification
+      context.$: $.context
+      threadTs.$: $.threadTs
+    Next: BugReportTimedOut
+  
+  BugReportTimedOut:
+    Type: Fail
+    Cause: User did not respond within timeout period
+  
+  FindRelevantEngineers:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugFindEngineersLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      analysis.$: $.analysis
+    ResultPath: $.engineers
+    Next: CheckIfHighSeverity
+  
+  CheckIfHighSeverity:
+    Type: Choice
+    Choices:
+      - Variable: $.bugReport.severity
+        StringEquals: high
+        Next: CreateTriageChannel
+    Default: SaveBugReport
+  
+  CreateTriageChannel:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugCreateChannelLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      engineers.$: $.engineers
+    ResultPath: $.channel
+    Next: CheckCalendarAvailability
+  
+  CheckCalendarAvailability:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [CalendarCheckAvailabilityLambdaFunction, Arn]
+    Parameters:
+      engineers.$: $.engineers
+      urgency.$: $.bugReport.severity
+    ResultPath: $.availability
+    Next: ScheduleMeeting
+  
+  ScheduleMeeting:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [CalendarScheduleMeetingLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      engineers.$: $.engineers
+      availability.$: $.availability
+      channel.$: $.channel
+    ResultPath: $.meeting
+    Next: SaveBugReport
+  
+  SaveBugReport:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [BugSaveLambdaFunction, Arn]
+    Parameters:
+      bugReport.$: $.bugReport
+      engineers.$: $.engineers
+      meeting.$: $.meeting
+      channel.$: $.channel
+    ResultPath: $.savedBug
+    Next: SendFinalNotification
+  
+  SendFinalNotification:
+    Type: Task
+    Resource:
+      Fn::GetAtt: [SlackNotifyLambdaFunction, Arn]
+    Parameters:
+      action: bugReportComplete
+      bugReport.$: $.savedBug
+      context.$: $.context
+      threadTs.$: $.threadTs
+    Next: BugTriageComplete
+  
+  BugTriageComplete:
+    Type: Succeed

@@ -4,19 +4,19 @@ provider:
   name: aws
   runtime: nodejs20.x
   region: us-east-1
-  stage: ${opt:stage, 'prod'}
-  memorySize: 256
+  stage: prod
+  memorySize: 512
   timeout: 30
   environment:
-    STAGE: ${self:provider.stage}
     SLACK_BOT_TOKEN: ${file(env.json):SLACK_BOT_TOKEN}
     SLACK_SIGNING_SECRET: ${file(env.json):SLACK_SIGNING_SECRET}
     OPENAI_API_KEY: ${file(env.json):OPENAI_API_KEY}
+    REDIS_URL: ${file(env.json):REDIS_URL}
+    REDIS_PASSWORD: ${file(env.json):REDIS_PASSWORD, ""}
     GOOGLE_CLIENT_ID: ${file(env.json):GOOGLE_CLIENT_ID}
     GOOGLE_CLIENT_SECRET: ${file(env.json):GOOGLE_CLIENT_SECRET}
     GOOGLE_REDIRECT_URI: ${file(env.json):GOOGLE_REDIRECT_URI}
     INTERNAL_API_KEY: ${file(env.json):INTERNAL_API_KEY}
-    # Table names
     USERS_TABLE: ${self:custom.usersTable}
     WORKSPACES_TABLE: ${self:custom.workspacesTable}
     ENGRAMS_TABLE: ${self:custom.engramsTable}
@@ -24,10 +24,6 @@ provider:
     CALENDAR_TOKENS_TABLE: ${self:custom.calendarTokensTable}
     MEETINGS_TABLE: ${self:custom.meetingsTable}
     AREA_EXPERTISE_TABLE: ${self:custom.areaExpertiseTable}
-    WORKFLOWS_TABLE: ${self:custom.workflowsTable}
-    # Queue and State Machine ARNs
-    BUG_RESPONSE_QUEUE_URL:
-      Ref: BugResponseQueue
   iamRoleStatements:
     - Effect: Allow
       Action:
@@ -48,27 +44,9 @@ provider:
         - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.meetingsTable}"
         - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.areaExpertiseTable}"
         - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.areaExpertiseTable}/index/*"
-        - "arn:aws:dynamodb:${self:provider.region}:*:table/${self:custom.workflowsTable}"
-    - Effect: Allow
-      Action:
-        - states:StartExecution
-        - states:ListStateMachines
-      Resource: "*"
-    - Effect: Allow
-      Action:
-        - states:SendTaskSuccess
-        - states:SendTaskFailure
-      Resource: "*"
-    - Effect: Allow
-      Action:
-        - sqs:SendMessage
-        - sqs:ReceiveMessage
-        - sqs:DeleteMessage
-      Resource:
-        - Fn::GetAtt: [BugResponseQueue, Arn]
 
 custom:
-  timestamp: ${self:provider.stage}-20250722
+  timestamp: ${self:provider.stage}-20250720
   usersTable: SemanticUsers-${self:provider.stage}
   workspacesTable: SemanticWorkspaces-${self:provider.stage}
   engramsTable: SemanticEngrams-${self:provider.stage}
@@ -76,95 +54,58 @@ custom:
   calendarTokensTable: SemanticCalendarTokens-${self:provider.stage}
   meetingsTable: SemanticMeetings-${self:provider.stage}
   areaExpertiseTable: SemanticAreaExpertise-${self:provider.stage}
-  workflowsTable: SemanticWorkflows-${self:provider.stage}
 
 functions:
-  # Main router Lambda - handles all Slack events
-  router:
-    handler: src/lambdas/router/index.handler
-    description: Main event router for Slack messages
-    memorySize: 512
+  slackBot:
+    handler: src/index.handler
+    description: Updated at ${self:custom.timestamp}
     events:
       - http:
           path: /slack/events
           method: post
           cors: true
-
-  # Bug Triage Lambdas
-  bugAnalyze:
-    handler: src/lambdas/bug-triage/analyze.handler
-    description: Analyze bug report quality and completeness
-    
-  bugQuestions:
-    handler: src/lambdas/bug-triage/questions.handler
-    description: Generate contextual follow-up questions
-    
-  bugProcessResponse:
-    handler: src/lambdas/bug-triage/process-response.handler
-    description: Process user responses to bug questions
-    
-  bugUpdate:
-    handler: src/lambdas/bug-triage/update-bug.handler
-    description: Update bug report with new information
-    
-  bugFindEngineers:
-    handler: src/lambdas/bug-triage/find-engineers.handler
-    description: Find relevant engineers based on expertise
-    
-  bugCreateChannel:
-    handler: src/lambdas/bug-triage/create-channel.handler
-    description: Create private Slack channel for bug triage
-    
-  bugSave:
-    handler: src/lambdas/bug-triage/save-bug.handler
-    description: Save final bug report to DynamoDB
-    
-  # Response handler for SQS messages
-  bugResponseHandler:
-    handler: src/lambdas/bug-triage/response-handler.handler
-    description: Handle bug responses from SQS queue
-    events:
-      - sqs:
-          arn:
-            Fn::GetAtt: [BugResponseQueue, Arn]
-          batchSize: 1
-
-  # Calendar Lambdas
-  calendarCheckAvailability:
-    handler: src/lambdas/calendar/check-availability.handler
-    description: Check calendar availability for engineers
-    
-  calendarScheduleMeeting:
-    handler: src/lambdas/calendar/schedule-meeting.handler
-    description: Schedule triage meetings
-    
-  # Notification Lambda
-  slackNotify:
-    handler: src/lambdas/notification/slack.handler
-    description: Send notifications to Slack
+      - http:
+          path: /messages
+          method: get
+          cors: true
+      - http:
+          path: /users
+          method: get
+          cors: true
+      - http:
+          path: /memory
+          method: get
+          cors: true
+      - http:
+          path: /message
+          method: post
+          cors: true
+      - http:
+          path: /create-bot
+          method: post
+          cors: true
+      - http:
+          path: /bugs
+          method: get
+          cors: true
+      - http:
+          path: /health
+          method: get
+          cors: true
+      - http:
+          path: /auth/google
+          method: get
+          cors: true
+      - http:
+          path: /auth/google/callback
+          method: get
+          cors: true
 
 plugins:
   - serverless-plugin-typescript
-  - serverless-step-functions
-
-stepFunctions:
-  stateMachines:
-    BugTriageWorkflow:
-      id: BugTriageStateMachine
-      name: BugTriageStateMachine-${self:provider.stage}
-      definition: ${file(src/step-functions/bug-triage.yml)}
 
 resources:
   Resources:
-    # SQS Queue for bug responses
-    BugResponseQueue:
-      Type: AWS::SQS::Queue
-      Properties:
-        QueueName: BugResponseQueue-${self:provider.stage}
-        VisibilityTimeout: 300
-        MessageRetentionPeriod: 3600
-
-    # DynamoDB Tables
     UsersTable:
       Type: AWS::DynamoDB::Table
       Properties:
@@ -276,26 +217,3 @@ resources:
             Projection:
               ProjectionType: ALL
         BillingMode: PAY_PER_REQUEST
-
-    WorkflowsTable:
-      Type: AWS::DynamoDB::Table
-      Properties:
-        TableName: ${self:custom.workflowsTable}
-        AttributeDefinitions:
-          - AttributeName: threadId
-            AttributeType: S
-        KeySchema:
-          - AttributeName: threadId
-            KeyType: HASH
-        TimeToLiveSpecification:
-          AttributeName: ttl
-          Enabled: true
-        BillingMode: PAY_PER_REQUEST
-
-  Outputs:
-    BugTriageStateMachineArn:
-      Description: ARN of the Bug Triage State Machine
-      Value: !Ref BugTriageStateMachine
-    BugResponseQueueUrl:
-      Description: URL of the Bug Response Queue
-      Value: !Ref BugResponseQueue

@@ -8,19 +8,34 @@ The Symentic Slack Bot is a production-ready Node.js application that serves as 
 
 ## Architecture
 
+### Hybrid Architecture (Step Functions + Lambda)
+As of the latest update, the bot uses a hybrid architecture combining AWS Step Functions for complex workflows with Lambda functions for individual tasks. This provides better state management, visual debugging, and scalability.
+
 ### Core Stack
 - **Runtime**: Node.js 20.x with TypeScript
 - **Framework**: Slack Bolt SDK for Slack app functionality
 - **Deployment**: AWS Lambda with Serverless Framework
-- **AI**: OpenAI GPT-4 for natural language processing
+- **Orchestration**: AWS Step Functions for complex workflows
+- **AI Models**:
+  - GPT-3.5-turbo: Intent classification, simple tasks
+  - GPT-4o-mini: Bug triage intelligence (default)
+  - GPT-4o: Emergency/critical bugs only
 - **Memory Storage**:
-  - Short-term: Redis (for active conversations and state)
+  - Short-term: In-memory (Redis optional)
   - Long-term: DynamoDB (for user profiles, engrams, bug reports)
+  - Workflow state: Step Functions state management
+- **Message Queuing**: SQS for async processing
 - **Calendar Integration**: Google Calendar API for meeting scheduling
 
 ### AWS Services
-- **Lambda**: Serverless compute for bot logic
-- **API Gateway**: HTTP endpoints for internal API
+- **Lambda Functions**:
+  - Router: Main event handler for Slack events
+  - Bug Triage Functions: analyze, questions, process-response, update, find-engineers, create-channel, save
+  - Calendar Functions: check-availability, schedule-meeting
+  - Notification Functions: slack notifications
+- **Step Functions**: Orchestrates complex workflows like bug triage
+- **API Gateway**: HTTP endpoints for Slack events
+- **SQS**: Queue for handling user responses in workflows
 - **DynamoDB Tables**:
   - `SemanticUsers`: User profiles and preferences
   - `SemanticWorkspaces`: Workspace configurations
@@ -29,7 +44,7 @@ The Symentic Slack Bot is a production-ready Node.js application that serves as 
   - `SemanticCalendarTokens`: OAuth tokens for calendar access
   - `SemanticMeetings`: Scheduled meeting records
   - `SemanticAreaExpertise`: Engineer expertise mapping
-- **ElastiCache**: Redis for short-term memory (if using AWS-managed Redis)
+  - `SemanticWorkflows`: Active workflow references for thread routing
 
 ## Development Workflow
 
@@ -53,16 +68,54 @@ npm run test
 
 ### Deployment
 ```bash
-# Deploy to AWS Lambda
+# Install dependencies including Step Functions plugin
+npm install
+npm install --save-dev serverless-step-functions
+
+# Deploy to AWS Lambda with Step Functions
 npm run deploy
 
 # Or use serverless directly
 serverless deploy --stage prod
+
+# View Step Function in AWS Console after deployment
+# Navigate to Step Functions → State machines → BugTriageStateMachine-prod
 ```
+
+### Deployment Notes
+- TypeScript compilation requires increased memory: Use `NODE_OPTIONS="--max-old-space-size=4096"` if encountering memory issues
+- The Step Function ARN is dynamically discovered at runtime to avoid circular dependencies
 
 ## Key Components
 
-### 1. Message Handler (`src/handlers/messageHandler.ts`)
+### 1. Router Lambda (`src/lambdas/router/index.ts`)
+- Entry point for all Slack events
+- Performs intent classification
+- Routes to appropriate workflows or handlers
+- Manages thread response routing
+
+### 2. Step Functions (`src/step-functions/bug-triage.yml`)
+- Orchestrates complex workflows
+- Manages state between Lambda invocations
+- Handles async operations with SQS
+- Provides visual debugging in AWS Console
+
+### 3. Specialized Lambda Functions
+- **Bug Analysis**: Evaluates bug report quality
+- **Question Generation**: Creates contextual follow-ups
+- **Response Processing**: Extracts info from user replies
+- **Engineer Finding**: Matches bugs to expertise
+- **Channel Creation**: Sets up private triage channels
+- **Meeting Scheduling**: Integrates with Google Calendar
+- **Notifications**: Sends updates to Slack
+
+### 4. Thread Response Handler (`src/lambdas/router/thread-response-handler.ts`)
+- Routes thread replies to active workflows
+- Manages workflow references in DynamoDB
+- Sends responses to SQS for Step Function processing
+
+### 5. Original Components (Still Used)
+#### Message Handler (`src/handlers/messageHandler.ts`)
 - Pre-filters incoming messages to determine processing needs
 - Checks for direct mentions, keywords, and bot questions
 - Manages context loading from Redis and DynamoDB
@@ -89,14 +142,30 @@ serverless deploy --stage prod
 - Requires `X-API-Key` authentication
 - Endpoints: `/messages`, `/users`, `/memory`, `/message`, `/create-bot`
 
-## Message Processing Flow
+## Message Processing Flow (Hybrid Architecture)
 
-1. **Message Received**: Slack sends event to Lambda via API Gateway
-2. **Pre-filtering**: `shouldProcessMessage()` determines if bot should respond
-3. **Context Loading**: Fetches user profile, recent messages, relevant engrams
-4. **AI Processing**: GPT-4 generates response based on context
-5. **Response Handling**: Bot posts response, stores new engrams if needed
-6. **Special Workflows**: Triggers bug triage or other agents as needed
+### New Architecture Flow:
+1. **Message Received**: Slack sends event to Router Lambda via API Gateway
+2. **Thread Response Check**: If message is in active workflow thread, route to SQS
+3. **Pre-filtering**: For new messages, check if bot should respond
+4. **Intent Classification**: Use GPT-3.5-turbo to classify intent
+5. **Workflow Routing**:
+   - Simple intents: Handle directly in Router Lambda
+   - Complex workflows: Start Step Function execution
+6. **Step Function Orchestration**: Manages state through workflow steps
+7. **Response Handling**: Individual Lambda functions handle each step
+
+### Bug Triage Workflow (Step Function):
+1. **Analyze Bug Report**: Assess quality and completeness
+2. **Quality Check**: If <80% complete, ask follow-up questions
+3. **Wait for Response**: Use SQS with task token for async handling
+4. **Process Response**: Extract information from user reply
+5. **Update Bug Report**: Merge new information
+6. **Find Engineers**: Query expertise table for relevant people
+7. **Create Channel**: For high-severity bugs
+8. **Schedule Meeting**: Check calendars and create event
+9. **Save Report**: Store in DynamoDB with engrams
+10. **Notify**: Send completion message to Slack
 
 ## Memory System
 
@@ -154,6 +223,11 @@ BUG_REPORTS_TABLE=SemanticBugReports-prod
 CALENDAR_TOKENS_TABLE=SemanticCalendarTokens-prod
 MEETINGS_TABLE=SemanticMeetings-prod
 AREA_EXPERTISE_TABLE=SemanticAreaExpertise-prod
+WORKFLOWS_TABLE=SemanticWorkflows-prod
+
+# Step Functions and SQS (auto-generated)
+BUG_TRIAGE_STATE_MACHINE_ARN=arn:aws:states:...
+BUG_RESPONSE_QUEUE_URL=https://sqs.region.amazonaws.com/.../BugResponseQueue-prod
 ```
 
 ### Slack App Permissions
@@ -173,9 +247,36 @@ Required OAuth scopes:
 5. **Rate Limits**: Respect Slack API rate limits (1 msg/sec)
 6. **Testing**: Write unit tests for new agents and handlers
 
+## Migration Guide (Monolithic → Hybrid Architecture)
+
+### Current Status
+✅ **MIGRATION COMPLETE**: The codebase has been successfully migrated to the hybrid Step Functions architecture.
+- **Old architecture**: Removed (previously `serverless-old.yml`)
+- **New architecture**: Deployed (`serverless.yml`, `src/lambdas/`)
+
+### Migration Results
+1. **Architecture**: Successfully migrated from monolithic Lambda to Step Functions + multiple Lambdas
+2. **Deployment**: New architecture deployed to production
+3. **Step Function**: `BugTriageStateMachine-prod` created and operational
+4. **Endpoint**: `https://fty0uj86ma.execute-api.us-east-1.amazonaws.com/prod/slack/events`
+
+### Key Differences
+- **State Management**: Step Functions instead of Redis
+- **Error Handling**: Built-in retries and error states
+- **Debugging**: Visual workflow in AWS Console
+- **Scalability**: Each function scales independently
+- **Cost**: Slightly higher but more efficient
+
 ## Common Tasks
 
-### Adding a New Agent
+### Adding a New Workflow (Step Function)
+1. Create workflow definition in `src/step-functions/`
+2. Create Lambda functions in `src/lambdas/[workflow-name]/`
+3. Update `serverless-new.yml` with new functions
+4. Add routing logic to Router Lambda
+5. Deploy and test
+
+### Adding a New Agent (Legacy)
 1. Create agent class in `src/agents/`
 2. Implement handler method with proper typing
 3. Register in message handler for trigger conditions

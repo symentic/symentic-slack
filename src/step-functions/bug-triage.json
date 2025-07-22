@@ -1,0 +1,221 @@
+{
+  "Comment": "Bug Triage Workflow for Semantic Slack Bot",
+  "StartAt": "AnalyzeBugReport",
+  "States": {
+    "AnalyzeBugReport": {
+      "Type": "Task",
+      "Resource": "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${self:service}-${self:provider.stage}-bugAnalyze",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "context.$": "$.context"
+      },
+      "ResultPath": "$.analysis",
+      "Next": "CheckReportQuality"
+    },
+    "CheckReportQuality": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.analysis.completenessScore",
+        "NumericGreaterThanEquals": 80,
+        "Next": "FindRelevantEngineers"
+      }],
+      "Default": "GenerateFollowUpQuestions"
+    },
+    "GenerateFollowUpQuestions": {
+      "Type": "Task",
+      "Resource": "${BugQuestionLambdaArn}",
+      "Parameters": {
+        "analysis.$": "$.analysis",
+        "bugReport.$": "$.bugReport",
+        "attemptCount.$": "$.attemptCount"
+      },
+      "ResultPath": "$.questions",
+      "Next": "SendQuestionsToSlack"
+    },
+    "SendQuestionsToSlack": {
+      "Type": "Task",
+      "Resource": "${SlackNotifyLambdaArn}",
+      "Parameters": {
+        "action": "sendBugQuestions",
+        "questions.$": "$.questions",
+        "context.$": "$.context",
+        "threadTs.$": "$.threadTs"
+      },
+      "Next": "WaitForUserResponse"
+    },
+    "WaitForUserResponse": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
+      "Parameters": {
+        "QueueUrl": "${BugResponseQueueUrl}",
+        "MessageBody": {
+          "taskToken.$": "$$.Task.Token",
+          "executionArn.$": "$$.Execution.Id",
+          "bugId.$": "$.bugId",
+          "userId.$": "$.context.userId",
+          "threadTs.$": "$.threadTs"
+        }
+      },
+      "TimeoutSeconds": 3600,
+      "Catch": [{
+        "ErrorEquals": ["States.TaskFailed", "States.Timeout"],
+        "Next": "HandleTimeout"
+      }],
+      "Next": "ProcessUserResponse"
+    },
+    "ProcessUserResponse": {
+      "Type": "Task",
+      "Resource": "${BugProcessResponseLambdaArn}",
+      "Parameters": {
+        "response.$": "$.userResponse",
+        "bugReport.$": "$.bugReport",
+        "analysis.$": "$.analysis"
+      },
+      "ResultPath": "$.processedResponse",
+      "Next": "CheckIfCancelled"
+    },
+    "CheckIfCancelled": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.processedResponse.action",
+        "StringEquals": "cancel",
+        "Next": "CancelBugReport"
+      }],
+      "Default": "UpdateBugReport"
+    },
+    "CancelBugReport": {
+      "Type": "Task",
+      "Resource": "${SlackNotifyLambdaArn}",
+      "Parameters": {
+        "action": "cancelBugReport",
+        "context.$": "$.context",
+        "threadTs.$": "$.threadTs"
+      },
+      "Next": "BugReportCancelled"
+    },
+    "BugReportCancelled": {
+      "Type": "Succeed"
+    },
+    "UpdateBugReport": {
+      "Type": "Task",
+      "Resource": "${BugUpdateLambdaArn}",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "newInfo.$": "$.processedResponse.extractedInfo"
+      },
+      "ResultPath": "$.bugReport",
+      "Next": "IncrementAttempt"
+    },
+    "IncrementAttempt": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:dynamodb:updateItem",
+      "Parameters": {
+        "TableName": "${BugReportsTable}",
+        "Key": {
+          "bugId": {
+            "S.$": "$.bugId"
+          }
+        },
+        "UpdateExpression": "SET attemptCount = attemptCount + :inc",
+        "ExpressionAttributeValues": {
+          ":inc": {
+            "N": "1"
+          }
+        }
+      },
+      "ResultPath": null,
+      "Next": "AnalyzeBugReport"
+    },
+    "HandleTimeout": {
+      "Type": "Task",
+      "Resource": "${SlackNotifyLambdaArn}",
+      "Parameters": {
+        "action": "timeoutNotification",
+        "context.$": "$.context",
+        "threadTs.$": "$.threadTs"
+      },
+      "Next": "BugReportTimedOut"
+    },
+    "BugReportTimedOut": {
+      "Type": "Fail",
+      "Cause": "User did not respond within timeout period"
+    },
+    "FindRelevantEngineers": {
+      "Type": "Task",
+      "Resource": "${FindEngineersLambdaArn}",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "analysis.$": "$.analysis"
+      },
+      "ResultPath": "$.engineers",
+      "Next": "CheckIfHighSeverity"
+    },
+    "CheckIfHighSeverity": {
+      "Type": "Choice",
+      "Choices": [{
+        "Variable": "$.bugReport.severity",
+        "StringEquals": "high",
+        "Next": "CreateTriageChannel"
+      }],
+      "Default": "SaveBugReport"
+    },
+    "CreateTriageChannel": {
+      "Type": "Task",
+      "Resource": "${CreateChannelLambdaArn}",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "engineers.$": "$.engineers"
+      },
+      "ResultPath": "$.channel",
+      "Next": "CheckCalendarAvailability"
+    },
+    "CheckCalendarAvailability": {
+      "Type": "Task",
+      "Resource": "${CalendarCheckLambdaArn}",
+      "Parameters": {
+        "engineers.$": "$.engineers",
+        "urgency.$": "$.bugReport.severity"
+      },
+      "ResultPath": "$.availability",
+      "Next": "ScheduleMeeting"
+    },
+    "ScheduleMeeting": {
+      "Type": "Task",
+      "Resource": "${ScheduleMeetingLambdaArn}",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "engineers.$": "$.engineers",
+        "availability.$": "$.availability",
+        "channel.$": "$.channel"
+      },
+      "ResultPath": "$.meeting",
+      "Next": "SaveBugReport"
+    },
+    "SaveBugReport": {
+      "Type": "Task",
+      "Resource": "${SaveBugReportLambdaArn}",
+      "Parameters": {
+        "bugReport.$": "$.bugReport",
+        "engineers.$": "$.engineers",
+        "meeting.$": "$.meeting",
+        "channel.$": "$.channel"
+      },
+      "ResultPath": "$.savedBug",
+      "Next": "SendFinalNotification"
+    },
+    "SendFinalNotification": {
+      "Type": "Task",
+      "Resource": "${SlackNotifyLambdaArn}",
+      "Parameters": {
+        "action": "bugReportComplete",
+        "bugReport.$": "$.savedBug",
+        "context.$": "$.context",
+        "threadTs.$": "$.threadTs"
+      },
+      "Next": "BugTriageComplete"
+    },
+    "BugTriageComplete": {
+      "Type": "Succeed"
+    }
+  }
+}
