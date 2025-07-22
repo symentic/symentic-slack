@@ -25,6 +25,7 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.515.0",
     "@aws-sdk/lib-dynamodb": "^3.515.0",
+    "@codegenie/serverless-express": "^4.17.0",
     "@slack/bolt": "^3.17.1",
     "@slack/web-api": "^7.0.2",
     "aws-sdk": "^2.1547.0",
@@ -35,6 +36,9 @@
     "openai": "^4.47.1",
     "redis": "^4.6.13",
     "uuid": "^9.0.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.134",

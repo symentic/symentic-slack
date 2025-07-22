@@ -9,17 +9,184 @@ export class OpenAIService {
     });
   }
 
+  // New method for intent classification with model selection
+  async classifyWithModel(
+    systemPrompt: string,
+    userPrompt: string,
+    model: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o' = 'gpt-3.5-turbo'
+  ): Promise<string> {
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.3, // Lower temperature for more consistent classification
+        max_tokens: 500,
+        response_format: { type: "json_object" } // Ensure JSON response
+      });
+
+      return completion.choices[0]?.message?.content || '{}';
+    } catch (error) {
+      console.error(`Error with ${model}:`, error);
+      throw error;
+    }
+  }
+
+  // Helper to detect if this is an emergency/critical bug
+  private isEmergencyBug(bugInfo: {
+    description: string;
+    impact?: string;
+  }): boolean {
+    const emergencyPatterns = [
+      /\b(emergency|critical|urgent|severity.*high|sev\s*[01])\b/i,
+      /\b(production|prod)\s+(down|outage|broken|failing)/i,
+      /\b(all|entire|every)\s+(users?|customers?|team)\s+(affected|impacted|blocked)/i,
+      /\b(data\s+loss|security\s+breach|payment\s+fail|revenue\s+impact)/i,
+      /\b(cannot|can't|unable\s+to)\s+(login|access|use|work)/i
+    ];
+
+    const fullText = `${bugInfo.description} ${bugInfo.impact || ''}`;
+    return emergencyPatterns.some(pattern => pattern.test(fullText));
+  }
+
+  // Analyze bug report quality and generate follow-up questions
+  async analyzeBugReportQuality(bugInfo: {
+    description: string;
+    reproductionSteps?: string;
+    environment?: string;
+    impact?: string;
+  }): Promise<{
+    completenessScore: number; // 0-100
+    qualityRating: number; // 1-10
+    missingInformation: string[];
+    followUpQuestions: string[];
+    confidence: number; // 0-1
+    category?: string; // UI, Performance, Security, etc.
+  }> {
+    const systemPrompt = `You are an expert bug triage specialist. Analyze the provided bug report and:
+1. Rate completeness from 0-100 (100 = has all necessary info to start fixing)
+2. Rate quality from 1-10 (10 = crystal clear, actionable)
+3. List specific missing information
+4. Generate 2-3 contextual follow-up questions (not generic)
+5. Categorize the bug type if possible
+6. Rate your confidence in understanding the issue (0-1)
+
+Consider these factors:
+- Clear description of the problem
+- Reproducible steps
+- Environment details (browser, OS, versions)
+- User impact and frequency
+- Error messages or logs
+- Expected vs actual behavior
+
+Respond in JSON format.`;
+
+    const userPrompt = `Bug Report:
+Description: ${bugInfo.description}
+${bugInfo.reproductionSteps ? `Reproduction Steps: ${bugInfo.reproductionSteps}` : 'Reproduction Steps: Not provided'}
+${bugInfo.environment ? `Environment: ${bugInfo.environment}` : 'Environment: Not provided'}
+${bugInfo.impact ? `Impact: ${bugInfo.impact}` : 'Impact: Not provided'}`;
+
+    // Use gpt-4o for emergency/critical bugs, gpt-4o-mini for others
+    const model = this.isEmergencyBug(bugInfo) ? 'gpt-4o' : 'gpt-4o-mini';
+    
+    try {
+      const response = await this.classifyWithModel(systemPrompt, userPrompt, model);
+      const analysis = JSON.parse(response);
+      
+      return {
+        completenessScore: analysis.completenessScore || 0,
+        qualityRating: analysis.qualityRating || 1,
+        missingInformation: analysis.missingInformation || [],
+        followUpQuestions: analysis.followUpQuestions || [],
+        confidence: analysis.confidence || 0,
+        category: analysis.category
+      };
+    } catch (error) {
+      console.error('Bug quality analysis failed:', error);
+      // Fallback response
+      return {
+        completenessScore: 30,
+        qualityRating: 3,
+        missingInformation: ['reproduction steps', 'environment details', 'impact'],
+        followUpQuestions: [
+          'Can you provide step-by-step instructions to reproduce this issue?',
+          'What browser and operating system are you using?',
+          'How often does this occur and how many users are affected?'
+        ],
+        confidence: 0.3
+      };
+    }
+  }
+
+  // Generate contextual follow-up questions based on partial information
+  async generateContextualFollowUps(bugContext: {
+    description: string;
+    currentInfo: Record<string, unknown>;
+    previousQuestions: string[];
+    userResponses: string[];
+  }): Promise<{
+    questions: string[];
+    priority: 'high' | 'medium' | 'low';
+    reasoning: string;
+  }> {
+    const systemPrompt = `You are helping gather complete bug report information. Based on the context:
+1. Generate 2-3 specific follow-up questions to gather missing critical information
+2. Avoid repeating previous questions
+3. Make questions specific to the bug type and context
+4. Prioritize questions that will most help developers fix the issue
+5. Consider the user's technical level based on their responses
+
+Respond in JSON format with questions array, priority, and reasoning.`;
+
+    const userPrompt = `Bug: ${bugContext.description}
+Current Information: ${JSON.stringify(bugContext.currentInfo, null, 2)}
+Previous Questions Asked: ${bugContext.previousQuestions.join('; ')}
+User Responses: ${bugContext.userResponses.join('; ')}`;
+
+    // Use gpt-4o for emergency/critical bugs
+    const model = this.isEmergencyBug({ 
+      description: bugContext.description, 
+      impact: bugContext.currentInfo.impact as string 
+    }) ? 'gpt-4o' : 'gpt-4o-mini';
+    
+    try {
+      const response = await this.classifyWithModel(systemPrompt, userPrompt, model);
+      const result = JSON.parse(response);
+      
+      return {
+        questions: result.questions || [],
+        priority: result.priority || 'medium',
+        reasoning: result.reasoning || ''
+      };
+    } catch (error) {
+      console.error('Follow-up generation failed:', error);
+      return {
+        questions: ['Can you provide more details about when this issue occurs?'],
+        priority: 'medium',
+        reasoning: 'Unable to generate contextual questions'
+      };
+    }
+  }
+
   async processMessage(
     message: string,
     _userId: string,
     _context: {
       channelId: string;
       threadTs: string;
-      recentMessages: any[];
+      recentMessages: Array<{
+        userId: string;
+        text: string;
+        ts: string;
+        threadTs?: string;
+      }>;
     }
   ): Promise<{
     intent: string;
-    entities: any;
+    entities: Record<string, unknown>;
     shouldTriggerAgent: string | null;
     response: string;
   }> {
@@ -86,7 +253,7 @@ Respond in JSON format with the following structure:
     }
   }
 
-  async classifyBugReport(description: string, _context: any): Promise<{
+  async classifyBugReport(description: string, _context: Record<string, unknown>): Promise<{
     severity: 'low' | 'medium' | 'high' | 'critical';
     category: string;
     suggestedActions: string[];
@@ -129,7 +296,12 @@ Respond in JSON format with:
     }
   }
 
-  async generateBugTriageQuestions(bugData: any): Promise<string[]> {
+  async generateBugTriageQuestions(bugData: {
+    description: string;
+    reproductionSteps?: string;
+    severity?: string;
+    environment?: string;
+  }): Promise<string[]> {
     const systemPrompt = `Generate follow-up questions for bug triage based on the provided bug data.
 Focus on gathering information needed to reproduce and fix the issue.
 
@@ -166,7 +338,11 @@ Respond in JSON format:
     }
   }
 
-  async analyzeUserResponse(response: string, bugContext: any): Promise<{
+  async analyzeUserResponse(response: string, bugContext: {
+    description: string;
+    currentStep: string;
+    previousResponses: string[];
+  }): Promise<{
     response: string;
     additionalStakeholders: string[];
     action: string | null;

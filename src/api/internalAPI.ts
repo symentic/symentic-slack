@@ -1,11 +1,11 @@
-import { Express } from 'express';
+import { Express, Request, Response, NextFunction } from 'express';
 import { App } from '@slack/bolt';
 import { redisService } from '../services/redis';
 import { dynamoDBService } from '../services/dynamodb';
 
 export function setupInternalAPI(expressApp: Express, slackApp: App): void {
   // Middleware for API key authentication
-  const authenticateAPI = (req: any, res: any, next: any) => {
+  const authenticateAPI = (req: Request, res: Response, next: NextFunction) => {
     const apiKey = req.headers['x-api-key'];
     if (apiKey !== process.env.INTERNAL_API_KEY) {
       return res.status(401).json({ error: 'Unauthorized' });
@@ -143,14 +143,18 @@ export function setupInternalAPI(expressApp: Express, slackApp: App): void {
       const botId = `bot-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       
       await dynamoDBService.saveUserProfile(botId, {
-        type: 'bot',
-        name,
-        botType: type,
-        config,
-        triggers,
-        capabilities,
-        createdAt: new Date().toISOString(),
-        status: 'active',
+        userId: botId,
+        slackId: botId,
+        displayName: name,
+        preferences: {
+          type: 'bot',
+          botType: type,
+          config,
+          triggers,
+          capabilities,
+          status: 'active'
+        },
+        createdAt: new Date().toISOString()
       });
 
       return res.json({

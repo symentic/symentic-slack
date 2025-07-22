@@ -1,5 +1,5 @@
 import { google } from 'googleapis';
-import { OAuth2Client } from 'google-auth-library';
+import { OAuth2Client, Credentials } from 'google-auth-library';
 import { dynamoDBService } from './dynamodb';
 
 export class GoogleCalendarService {
@@ -28,7 +28,7 @@ export class GoogleCalendarService {
 
   async handleAuthCallback(code: string, userId: string): Promise<void> {
     const { tokens } = await this.oauth2Client.getToken(code);
-    await dynamoDBService.saveCalendarToken(userId, tokens);
+    await dynamoDBService.saveCalendarToken(userId, tokens as Record<string, unknown>);
   }
 
   async getCalendarClient(userId: string) {
@@ -37,12 +37,12 @@ export class GoogleCalendarService {
       throw new Error('No calendar tokens found for user');
     }
 
-    this.oauth2Client.setCredentials(tokens);
+    this.oauth2Client.setCredentials(tokens as Credentials);
     
     // Refresh token if needed
-    if (tokens.expiry_date && tokens.expiry_date <= Date.now()) {
+    if (tokens.expiry_date && (tokens.expiry_date as number) <= Date.now()) {
       const { credentials } = await this.oauth2Client.refreshAccessToken();
-      await dynamoDBService.saveCalendarToken(userId, credentials);
+      await dynamoDBService.saveCalendarToken(userId, credentials as Record<string, unknown>);
       this.oauth2Client.setCredentials(credentials);
     }
 
@@ -78,7 +78,7 @@ export class GoogleCalendarService {
         });
 
         const busy = response.data.calendars?.primary?.busy || [];
-        busy.forEach((slot: any) => {
+        busy.forEach((slot) => {
           allBusyTimes.push({
             start: new Date(slot.start!),
             end: new Date(slot.end!),
@@ -181,7 +181,7 @@ export class GoogleCalendarService {
   async updateMeeting(
     userId: string,
     eventId: string,
-    updates: any
+    updates: Record<string, unknown>
   ): Promise<void> {
     const calendar = await this.getCalendarClient(userId);
 
@@ -202,6 +202,183 @@ export class GoogleCalendarService {
       calendarId: 'primary',
       eventId,
     });
+  }
+
+  // Check availability for multiple participants
+  async checkAvailability(
+    participantEmails: string[],
+    proposedTime: string,
+    duration: number = 60
+  ): Promise<{
+    allAvailable: boolean;
+    conflicts: Array<{ email: string; conflict: string }>;
+  }> {
+    const startTime = new Date(proposedTime);
+    const endTime = new Date(startTime);
+    endTime.setMinutes(endTime.getMinutes() + duration);
+
+    const conflicts: Array<{ email: string; conflict: string }> = [];
+
+    for (const email of participantEmails) {
+      try {
+        // Note: In production, you'd need to map emails to userIds
+        // For now, we'll use email as userId placeholder
+        const calendar = await this.getCalendarClient(email);
+        
+        const response = await calendar.freebusy.query({
+          requestBody: {
+            timeMin: startTime.toISOString(),
+            timeMax: endTime.toISOString(),
+            items: [{ id: 'primary' }],
+          },
+        });
+
+        const busy = response.data.calendars?.primary?.busy || [];
+        if (busy.length > 0) {
+          conflicts.push({
+            email,
+            conflict: `Busy from ${busy[0].start} to ${busy[0].end}`
+          });
+        }
+      } catch (error) {
+        console.error(`Failed to check availability for ${email}:`, error);
+        // Assume unavailable if we can't check
+        conflicts.push({
+          email,
+          conflict: 'Unable to check availability'
+        });
+      }
+    }
+
+    return {
+      allAvailable: conflicts.length === 0,
+      conflicts
+    };
+  }
+
+  // Find alternative meeting times
+  async findAlternativeTimes(
+    participantEmails: string[],
+    originalTime: string,
+    duration: number = 60,
+    alternatives: number = 3
+  ): Promise<Array<{
+    timestamp: string;
+    formatted: string;
+    available: boolean;
+  }>> {
+    const suggestions: Array<{
+      timestamp: string;
+      formatted: string;
+      available: boolean;
+    }> = [];
+
+    const baseTime = new Date(originalTime);
+    const timeSlotsToCheck = [
+      // Same day alternatives
+      new Date(baseTime.getTime() + 60 * 60 * 1000), // +1 hour
+      new Date(baseTime.getTime() + 2 * 60 * 60 * 1000), // +2 hours
+      new Date(baseTime.getTime() - 60 * 60 * 1000), // -1 hour
+      // Next day same time
+      new Date(baseTime.getTime() + 24 * 60 * 60 * 1000),
+      // Next day +1 hour
+      new Date(baseTime.getTime() + 25 * 60 * 60 * 1000),
+    ];
+
+    for (const slot of timeSlotsToCheck) {
+      if (suggestions.length >= alternatives) break;
+
+      // Skip if outside business hours (9 AM - 5 PM)
+      const hours = slot.getHours();
+      if (hours < 9 || hours >= 17) continue;
+
+      // Skip weekends
+      const day = slot.getDay();
+      if (day === 0 || day === 6) continue;
+
+      const availability = await this.checkAvailability(
+        participantEmails,
+        slot.toISOString(),
+        duration
+      );
+
+      suggestions.push({
+        timestamp: slot.toISOString(),
+        formatted: slot.toLocaleString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZone: 'America/New_York'
+        }),
+        available: availability.allAvailable
+      });
+    }
+
+    // Sort by availability (available times first)
+    return suggestions.sort((a, b) => {
+      if (a.available && !b.available) return -1;
+      if (!a.available && b.available) return 1;
+      return 0;
+    }).slice(0, alternatives);
+  }
+
+  // Get events for a specific date
+  async getEvents(
+    userEmail: string,
+    date: string = 'today'
+  ): Promise<Array<{
+    time: string;
+    title: string;
+    attendees?: string;
+  }>> {
+    try {
+      const calendar = await this.getCalendarClient(userEmail);
+      
+      // Parse date
+      let startDate: Date;
+      let endDate: Date;
+      
+      if (date === 'today') {
+        startDate = new Date();
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date();
+        endDate.setHours(23, 59, 59, 999);
+      } else {
+        startDate = new Date(date);
+        startDate.setHours(0, 0, 0, 0);
+        endDate = new Date(date);
+        endDate.setHours(23, 59, 59, 999);
+      }
+
+      const response = await calendar.events.list({
+        calendarId: 'primary',
+        timeMin: startDate.toISOString(),
+        timeMax: endDate.toISOString(),
+        singleEvents: true,
+        orderBy: 'startTime',
+      });
+
+      const events = response.data.items || [];
+      
+      return events.map(event => ({
+        time: event.start?.dateTime 
+          ? new Date(event.start.dateTime).toLocaleTimeString('en-US', {
+              hour: 'numeric',
+              minute: '2-digit'
+            })
+          : 'All day',
+        title: event.summary || 'No title',
+        attendees: event.attendees
+          ?.map(a => a.email)
+          .filter(e => e !== userEmail)
+          .join(', ')
+      }));
+    } catch (error) {
+      console.error(`Failed to get events for ${userEmail}:`, error);
+      return [];
+    }
   }
 }
 

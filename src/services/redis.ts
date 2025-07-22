@@ -4,12 +4,18 @@ export class RedisService {
   private client: RedisClientType | null = null;
   private isConnected = false;
   private isEnabled = false;
-  private inMemoryStore: Map<string, { value: any; expires: number }> = new Map();
+  private inMemoryStore: Map<string, { value: unknown; expires: number }> = new Map();
 
   constructor() {
     // Only enable Redis if a valid external URL is provided
     const redisUrl = process.env.REDIS_URL || '';
-    this.isEnabled = redisUrl && !redisUrl.includes('localhost') && !redisUrl.includes('127.0.0.1');
+    this.isEnabled = Boolean(
+      redisUrl && 
+      !redisUrl.includes('localhost') && 
+      !redisUrl.includes('127.0.0.1') &&
+      !redisUrl.includes('YOUR-ELASTICACHE-ENDPOINT') &&
+      !redisUrl.includes('YOUR_REDIS_ENDPOINT')
+    );
     
     if (this.isEnabled) {
       this.client = createClient({
@@ -17,10 +23,10 @@ export class RedisService {
         password: process.env.REDIS_PASSWORD,
       });
 
-      this.client.on('error', (err) => console.error('Redis Client Error', err));
-      this.client.on('connect', () => console.log('Redis Client Connected'));
+      this.client.on('error', (err) => console.error('Redis Client Error', err)); // eslint-disable-line no-console
+      this.client.on('connect', () => console.log('Redis Client Connected')); // eslint-disable-line no-console
     } else {
-      console.log('Redis is disabled - using in-memory storage');
+      console.log('Redis is disabled - using in-memory storage'); // eslint-disable-line no-console
     }
   }
 
@@ -32,7 +38,7 @@ export class RedisService {
         await this.client.connect();
         this.isConnected = true;
       } catch (error) {
-        console.error('Failed to connect to Redis:', error);
+        console.error('Failed to connect to Redis:', error); // eslint-disable-line no-console
         this.isEnabled = false;
       }
     }
@@ -56,7 +62,7 @@ export class RedisService {
   }
 
   // Short-term memory operations
-  async setShortTermMemory(key: string, value: any, ttl: number = 3600): Promise<void> {
+  async setShortTermMemory(key: string, value: unknown, ttl: number = 3600): Promise<void> {
     if (this.isEnabled && this.client) {
       await this.connect();
       await this.client.setEx(key, ttl, JSON.stringify(value));
@@ -70,7 +76,7 @@ export class RedisService {
     }
   }
 
-  async getShortTermMemory(key: string): Promise<any | null> {
+  async getShortTermMemory(key: string): Promise<unknown | null> {
     if (this.isEnabled && this.client) {
       await this.connect();
       const value = await this.client.get(key);
@@ -97,34 +103,93 @@ export class RedisService {
   }
 
   // Conversation state management
-  async setConversationState(userId: string, threadTs: string, state: any): Promise<void> {
+  async setConversationState(userId: string, threadTs: string, state: Record<string, unknown>): Promise<void> {
     const key = `conversation:${userId}:${threadTs}`;
     await this.setShortTermMemory(key, state, 7200); // 2 hour TTL
   }
 
-  async getConversationState(userId: string, threadTs: string): Promise<any | null> {
+  async getConversationState(userId: string, threadTs: string): Promise<Record<string, unknown> | null> {
     const key = `conversation:${userId}:${threadTs}`;
-    return await this.getShortTermMemory(key);
+    const result = await this.getShortTermMemory(key);
+    return result as Record<string, unknown> | null;
   }
 
-  // Bug triage state management
-  async setBugTriageState(userId: string, threadTs: string, state: any): Promise<void> {
+  // Enhanced bug triage state management
+  async setBugTriageState(userId: string, threadTs: string, state: {
+    step: string;
+    description: string;
+    reproductionSteps?: string;
+    environment?: string;
+    impact?: string;
+    severity?: 'low' | 'medium' | 'high';
+    completenessScore: number;
+    qualityRating: number;
+    missingInformation: string[];
+    previousQuestions: string[];
+    userResponses: string[];
+    attemptCount: number;
+    category?: string;
+    confidence: number;
+    userId: string;
+    channelId: string;
+    threadTs: string;
+    timestamp: string;
+    lastUpdated: string;
+  }): Promise<void> {
     const key = `bug-triage:${userId}:${threadTs}`;
-    await this.setShortTermMemory(key, state, 3600); // 1 hour TTL
+    const updatedState = {
+      ...state,
+      lastUpdated: new Date().toISOString()
+    };
+    await this.setShortTermMemory(key, updatedState, 7200); // 2 hour TTL
   }
 
-  async getBugTriageState(userId: string, threadTs: string): Promise<any | null> {
+  async getBugTriageState(userId: string, threadTs: string): Promise<Record<string, unknown> | null> {
     const key = `bug-triage:${userId}:${threadTs}`;
-    return await this.getShortTermMemory(key);
+    const result = await this.getShortTermMemory(key);
+    return result as Record<string, unknown> | null;
+  }
+
+  // Update specific fields in bug triage state
+  async updateBugTriageState(userId: string, threadTs: string, updates: Partial<{
+    reproductionSteps: string;
+    environment: string;
+    impact: string;
+    severity: 'low' | 'medium' | 'high';
+    completenessScore: number;
+    qualityRating: number;
+    userResponses: string[];
+    previousQuestions: string[];
+    attemptCount: number;
+  }>): Promise<void> {
+    const currentState = await this.getBugTriageState(userId, threadTs);
+    if (currentState) {
+      const updatedState = {
+        ...currentState,
+        ...updates,
+        lastUpdated: new Date().toISOString()
+      };
+      await this.setBugTriageState(userId, threadTs, updatedState as Parameters<typeof this.setBugTriageState>[2]);
+    }
   }
 
   // Recent messages cache
-  async cacheRecentMessage(channelId: string, message: any): Promise<void> {
+  async cacheRecentMessage(channelId: string, message: {
+    userId: string;
+    text: string;
+    ts: string;
+    threadTs?: string;
+  }): Promise<void> {
     const key = `recent-messages:${channelId}`;
     await this.connect();
     
     // Get existing messages
-    const existingMessages = await this.getShortTermMemory(key) || [];
+    const existingMessages = (await this.getShortTermMemory(key) || []) as Array<{
+      userId: string;
+      text: string;
+      ts: string;
+      threadTs?: string;
+    }>;
     
     // Add new message and keep only last 100
     existingMessages.unshift(message);
@@ -135,10 +200,43 @@ export class RedisService {
     await this.setShortTermMemory(key, existingMessages, 86400); // 24 hour TTL
   }
 
-  async getRecentMessages(channelId: string, limit: number = 50): Promise<any[]> {
+  async getRecentMessages(channelId: string, limit: number = 50): Promise<Array<{
+    userId: string;
+    text: string;
+    ts: string;
+    threadTs?: string;
+  }>> {
     const key = `recent-messages:${channelId}`;
-    const messages = await this.getShortTermMemory(key) || [];
+    const messages = (await this.getShortTermMemory(key) || []) as Array<{
+      userId: string;
+      text: string;
+      ts: string;
+      threadTs?: string;
+    }>;
     return messages.slice(0, limit);
+  }
+
+  // Get all keys matching a pattern
+  async getKeys(pattern: string): Promise<string[]> {
+    if (!this.isEnabled || !this.client) {
+      // For in-memory store, filter keys by pattern
+      const keys: string[] = [];
+      const regex = new RegExp(pattern.replace(/\*/g, '.*'));
+      for (const key of this.inMemoryStore.keys()) {
+        if (regex.test(key)) {
+          keys.push(key);
+        }
+      }
+      return keys;
+    }
+
+    try {
+      await this.connect();
+      return await this.client.keys(pattern);
+    } catch (error) {
+      console.error('Redis getKeys error:', error);
+      return [];
+    }
   }
 }
 

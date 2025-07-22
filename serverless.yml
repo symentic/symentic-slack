@@ -2,7 +2,7 @@ service: semantic-slack-bot
 
 provider:
   name: aws
-  runtime: nodejs18.x
+  runtime: nodejs20.x
   region: us-east-1
   stage: prod
   memorySize: 512
@@ -12,7 +12,7 @@ provider:
     SLACK_SIGNING_SECRET: ${file(env.json):SLACK_SIGNING_SECRET}
     OPENAI_API_KEY: ${file(env.json):OPENAI_API_KEY}
     REDIS_URL: ${file(env.json):REDIS_URL}
-    REDIS_PASSWORD: ${file(env.json):REDIS_PASSWORD}
+    REDIS_PASSWORD: ${file(env.json):REDIS_PASSWORD, ""}
     GOOGLE_CLIENT_ID: ${file(env.json):GOOGLE_CLIENT_ID}
     GOOGLE_CLIENT_SECRET: ${file(env.json):GOOGLE_CLIENT_SECRET}
     GOOGLE_REDIRECT_URI: ${file(env.json):GOOGLE_REDIRECT_URI}

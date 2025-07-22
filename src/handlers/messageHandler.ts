@@ -1,193 +1,178 @@
-import { WebClient } from '@slack/web-api';
+import { ConversationContext, AgentResponse } from '../agents/base/BaseAgent';
+import { intentClassifier } from '../services/intentClassifier';
+import { createAgentRegistry } from '../services/agentRegistry';
 import { redisService } from '../services/redis';
 import { dynamoDBService } from '../services/dynamodb';
-import { openAIService } from '../services/openai';
-import { bugTriageAgent } from '../agents/bugTriageAgent';
+import { MessageHandlerContext } from '../types/slack';
 
-// Pre-filter function to determine if message needs processing
+// Pre-filter function (same as before)
 function shouldProcessMessage(text: string, channelType: string, botUserId?: string): boolean {
   const lowerText = text.toLowerCase();
   
-  // Always process direct messages
-  if (channelType === 'im') {
-    return true;
-  }
+  if (channelType === 'im') return true;
+  if (botUserId && text.includes(`<@${botUserId}>`)) return true;
   
-  // Process if bot is mentioned (we'll need to get bot user ID)
-  if (botUserId && text.includes(`<@${botUserId}>`)) {
-    return true;
-  }
-  
-  // Process specific commands/keywords
   const triggerKeywords = [
-    'bug:',
-    'bug with',
-    'there is a bug',
-    'found a bug',
-    'bug in',
-    'remind me',
-    'schedule',
-    'meeting',
-    'help me',
-    '@semantic', // in case someone tries to mention by name
+    'bug:', 'bug', 'schedule', 'meeting', 'remind me', 'help me',
+    'can you', 'could you', 'would you', '@semantic', 'there is a bug',
+    'found a bug', 'fix', 'error', 'issue', 'problem'
   ];
   
-  if (triggerKeywords.some(keyword => lowerText.includes(keyword))) {
-    return true;
-  }
-  
-  // Process questions that seem directed to the bot
-  const botQuestions = [
-    'can you',
-    'could you',
-    'would you',
-    'please help',
-    'i need help',
-  ];
-  
-  if (botQuestions.some(phrase => lowerText.includes(phrase))) {
-    return true;
-  }
-  
-  // Don't process general chatter
-  return false;
+  return triggerKeywords.some(keyword => lowerText.includes(keyword));
 }
 
 export async function messageHandler({
   message,
   say,
   client,
-}: {
-  message: any;
-  say: any;
-  client: WebClient;
-}): Promise<void> {
-  // Ignore bot messages
+}: MessageHandlerContext): Promise<void> {
+  // Skip bot messages
   if (message.bot_id || message.subtype === 'bot_message') {
     return;
   }
 
-  // Check for duplicate message processing using message timestamp
+  // Prevent duplicate processing
   const messageKey = `processed:${message.ts}`;
-  const alreadyProcessed = await redisService.getShortTermMemory(messageKey);
-  if (alreadyProcessed) {
-    console.log(`Skipping duplicate message: ${message.ts}`);
+  if (await redisService.getShortTermMemory(messageKey)) {
+    console.log(`Skipping duplicate message with timestamp ${message.ts} - already processed`);
     return;
   }
-  
-  // Mark message as processed (with 5 minute TTL)
   await redisService.setShortTermMemory(messageKey, true, 300);
 
-  const userId = message.user;
-  const channelId = message.channel;
+  const userId = message.user || '';
+  const channelId = message.channel || '';
   const threadTs = message.thread_ts || message.ts;
   const text = message.text || '';
 
+  // Skip if no user ID (shouldn't happen for real messages)
+  if (!userId) {
+    console.log('Message has no user ID, skipping');
+    return;
+  }
+
   try {
-    // Cache message in Redis for recent history
-    await redisService.cacheRecentMessage(channelId, {
-      userId,
-      text,
-      ts: message.ts,
-      threadTs,
-    });
-
-    // Check if this is a bug triage continuation
-    const bugTriageState = await redisService.getBugTriageState(userId, threadTs);
-    if (bugTriageState && bugTriageState.step !== 'complete') {
-      const agent = bugTriageAgent(client);
-      await agent.handleTriageResponse(message, say, bugTriageState);
-      return;
-    }
-
-    // Pre-filter: Check if we should process this message
+    // Pre-filter check
     const channelType = message.channel_type || (channelId.startsWith('D') ? 'im' : 'channel');
+    let botUserId = await redisService.getShortTermMemory('bot:userId') as string | undefined;
     
-    // Get bot user ID if we don't have it cached
-    let botUserId = await redisService.getShortTermMemory('bot:userId');
     if (!botUserId) {
-      try {
-        const authTest = await client.auth.test();
-        botUserId = authTest.user_id;
-        await redisService.setShortTermMemory('bot:userId', botUserId, 86400); // Cache for 24 hours
-      } catch (error) {
-        console.error('Failed to get bot user ID:', error);
+      const authTest = await client.auth.test();
+      botUserId = authTest.user_id || undefined;
+      if (botUserId) {
+        await redisService.setShortTermMemory('bot:userId', botUserId, 86400);
       }
     }
     
     if (!shouldProcessMessage(text, channelType, botUserId)) {
-      console.log('Message does not require bot response, skipping OpenAI API call');
+      console.log(`Message does not require processing. Text: "${text}", Channel type: ${channelType}, Bot mentioned: ${botUserId && text.includes(`<@${botUserId}>`)}`);
       return;
     }
 
-    // Process message with OpenAI to understand intent
-    const analysis = await openAIService.processMessage(text, userId, {
+    // STEP 1: Classify intent using AI
+    const recentMessages = await redisService.getRecentMessages(channelId, 5);
+    const intent = await intentClassifier.classifyIntent({
+      message: text,
+      userId,
       channelId,
-      threadTs,
-      recentMessages: await redisService.getRecentMessages(channelId, 10),
+      recentContext: recentMessages.map(m => m.text)
     });
 
-    // Check if we should trigger bug triage agent
-    const lowerText = text.toLowerCase();
-    const bugPatterns = [
-      /bug:\s*(.+)/i,
-      /there is a bug(?:\s+with)?\s*(.+)/i,
-      /found a bug(?:\s+in)?\s*(.+)/i,
-      /bug with\s+(.+)/i,
-      /bug in\s+(.+)/i
-    ];
-    
-    let bugMatch = null;
-    for (const pattern of bugPatterns) {
-      const match = text.match(pattern);
-      if (match) {
-        bugMatch = match;
-        break;
+    console.log(`Intent classified: ${intent.intent} (confidence: ${intent.confidence}, model: ${intent.modelUsed})`);
+
+    // STEP 2: Load conversation context
+    const context: ConversationContext = {
+      userId,
+      channelId,
+      threadTs,
+      messageTs: message.ts,
+      originalText: text,
+      intent,
+      memory: {
+        shortTerm: await loadShortTermMemory(userId, channelId),
+        longTerm: await loadLongTermMemory(userId)
       }
-    }
-    
-    if (bugMatch || analysis.shouldTriggerAgent === 'bug-triage') {
-      const bugDescription = bugMatch ? bugMatch[1].trim() : text;
-      const agent = bugTriageAgent(client);
-      await agent.handleBugReport(message, say, bugDescription);
+    };
+
+    // STEP 3: Get agent registry and route to appropriate agent
+    const agentRegistry = createAgentRegistry(client);
+    const response = await agentRegistry.routeToAgent(context, say);
+
+    if (!response) {
+      // No agent could handle this intent - fallback to general response
+      await say({
+        text: "I'm not sure how to help with that. Try asking about scheduling meetings, reporting bugs, or creating tasks.",
+        thread_ts: threadTs
+      });
       return;
     }
 
-    // Check for follow-up questions in triage channels
-    if (channelId.startsWith('triage-')) {
-      const bugId = channelId.replace('triage-', '').toUpperCase();
-      if (text.includes('anything else') || text.includes('who else')) {
-        const agent = bugTriageAgent(client);
-        await agent.handleFollowUp(message, say, bugId);
-        return;
-      }
+    // STEP 4: Store interaction if needed
+    if (response.shouldStore) {
+      await storeInteraction(context, response);
     }
 
-    // Handle general conversation - only respond if there's actual content
-    if (analysis.response && analysis.response.trim() !== '' && !text.startsWith('!silent')) {
-      await say({
-        text: analysis.response,
-        thread_ts: threadTs,
-      });
-    }
-
-    // Update user profile with activity
+    // Update user activity
     await dynamoDBService.saveUserProfile(userId, {
       lastActiveAt: new Date().toISOString(),
       lastChannel: channelId,
-      messageCount: (await dynamoDBService.getUserProfile(userId))?.messageCount + 1 || 1,
+      lastIntent: intent.intent
     });
 
   } catch (error) {
-    console.error('Error handling message:', error);
+    console.error('Error in message handler:', error);
     
-    // Send error message only if it's a direct mention or DM
-    // Note: botUserId is not available in the handler context, so we'll check for direct message only
     if (message.channel_type === 'im') {
       await say({
-        text: "I encountered an error processing your message. Please try again later.",
+        text: "I encountered an error processing your message. Please try again.",
         thread_ts: threadTs,
       });
     }
+  }
+}
+
+// Helper functions
+async function loadShortTermMemory(userId: string, channelId: string): Promise<Record<string, unknown>> {
+  const memory: Record<string, unknown> = {};
+  
+  // Load recent messages
+  memory.recentMessages = await redisService.getRecentMessages(channelId, 10);
+  
+  // Load any active workflows
+  const bugTriageKey = `bug-triage:${userId}:*`;
+  const activeWorkflows = await redisService.getKeys(bugTriageKey);
+  if (activeWorkflows.length > 0) {
+    memory.activeWorkflows = activeWorkflows;
+  }
+  
+  return memory;
+}
+
+async function loadLongTermMemory(userId: string): Promise<Record<string, unknown>> {
+  const memory: Record<string, unknown> = {};
+  
+  // Load user profile
+  memory.userProfile = await dynamoDBService.getUserProfile(userId);
+  
+  // Load recent engrams
+  const engrams = await dynamoDBService.getUserEngrams(userId, 20);
+  memory.engrams = engrams;
+  
+  return memory;
+}
+
+async function storeInteraction(context: ConversationContext, response: AgentResponse): Promise<void> {
+  // Store significant interactions as engrams
+  if (context.intent.confidence > 0.8) {
+    await dynamoDBService.saveEngram({
+      userId: context.userId,
+      timestamp: new Date().toISOString(),
+      type: 'interaction',
+      content: {
+        intent: context.intent.intent,
+        entities: context.intent.entities,
+        response: response.text,
+        metadata: response.metadata
+      }
+    });
   }
 }

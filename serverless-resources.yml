@@ -1,0 +1,214 @@
+resources:
+  Resources:
+    # ElastiCache Subnet Group
+    ElastiCacheSubnetGroup:
+      Type: AWS::ElastiCache::SubnetGroup
+      Properties:
+        Description: Subnet group for ElastiCache Redis
+        SubnetIds:
+          - Ref: PrivateSubnetA
+          - Ref: PrivateSubnetB
+
+    # ElastiCache Parameter Group
+    ElastiCacheParameterGroup:
+      Type: AWS::ElastiCache::ParameterGroup
+      Properties:
+        CacheParameterGroupFamily: redis7
+        Description: Parameter group for Redis
+        Properties:
+          maxmemory-policy: allkeys-lru
+
+    # Security Group for ElastiCache
+    ElastiCacheSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for ElastiCache Redis
+        VpcId:
+          Ref: VPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId:
+              Ref: LambdaSecurityGroup
+
+    # Security Group for Lambda
+    LambdaSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Lambda functions
+        VpcId:
+          Ref: VPC
+        SecurityGroupEgress:
+          - IpProtocol: -1
+            CidrIp: 0.0.0.0/0
+
+    # ElastiCache Redis Cluster
+    ElastiCacheCluster:
+      Type: AWS::ElastiCache::CacheCluster
+      Properties:
+        CacheNodeType: cache.t3.micro
+        Engine: redis
+        NumCacheNodes: 1
+        CacheParameterGroupName:
+          Ref: ElastiCacheParameterGroup
+        CacheSubnetGroupName:
+          Ref: ElastiCacheSubnetGroup
+        VpcSecurityGroupIds:
+          - Ref: ElastiCacheSecurityGroup
+        PreferredMaintenanceWindow: sun:05:00-sun:06:00
+        SnapshotRetentionLimit: 1
+        SnapshotWindow: 03:00-04:00
+
+    # VPC
+    VPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsHostnames: true
+        EnableDnsSupport: true
+
+    # Internet Gateway
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+
+    # Attach Internet Gateway to VPC
+    VPCGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        InternetGatewayId:
+          Ref: InternetGateway
+        VpcId:
+          Ref: VPC
+
+    # Private Subnet A
+    PrivateSubnetA:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: VPC
+        CidrBlock: 10.0.1.0/24
+        AvailabilityZone: ${aws:region}a
+
+    # Private Subnet B
+    PrivateSubnetB:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: VPC
+        CidrBlock: 10.0.2.0/24
+        AvailabilityZone: ${aws:region}b
+
+    # Public Subnet
+    PublicSubnet:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId:
+          Ref: VPC
+        CidrBlock: 10.0.3.0/24
+        MapPublicIpOnLaunch: true
+        AvailabilityZone: ${aws:region}a
+
+    # NAT Gateway EIP
+    NATGatewayEIP:
+      Type: AWS::EC2::EIP
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        Domain: vpc
+
+    # NAT Gateway
+    NATGateway:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId:
+          Fn::GetAtt: [NATGatewayEIP, AllocationId]
+        SubnetId:
+          Ref: PublicSubnet
+
+    # Route Table for Public Subnet
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: VPC
+
+    # Route for Public Subnet
+    PublicRoute:
+      Type: AWS::EC2::Route
+      DependsOn: VPCGatewayAttachment
+      Properties:
+        RouteTableId:
+          Ref: PublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId:
+          Ref: InternetGateway
+
+    # Associate Public Route Table with Public Subnet
+    PublicSubnetRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PublicSubnet
+        RouteTableId:
+          Ref: PublicRouteTable
+
+    # Route Table for Private Subnets
+    PrivateRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId:
+          Ref: VPC
+
+    # Route for Private Subnets
+    PrivateRoute:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId:
+          Ref: PrivateRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId:
+          Ref: NATGateway
+
+    # Associate Private Route Table with Private Subnet A
+    PrivateSubnetARouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PrivateSubnetA
+        RouteTableId:
+          Ref: PrivateRouteTable
+
+    # Associate Private Route Table with Private Subnet B
+    PrivateSubnetBRouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId:
+          Ref: PrivateSubnetB
+        RouteTableId:
+          Ref: PrivateRouteTable
+
+  Outputs:
+    ElastiCacheEndpoint:
+      Description: ElastiCache Redis Endpoint
+      Value:
+        Fn::GetAtt: [ElastiCacheCluster, RedisEndpoint.Address]
+    ElastiCachePort:
+      Description: ElastiCache Redis Port
+      Value:
+        Fn::GetAtt: [ElastiCacheCluster, RedisEndpoint.Port]
+    VPCId:
+      Description: VPC ID
+      Value:
+        Ref: VPC
+    PrivateSubnetAId:
+      Description: Private Subnet A ID
+      Value:
+        Ref: PrivateSubnetA
+    PrivateSubnetBId:
+      Description: Private Subnet B ID
+      Value:
+        Ref: PrivateSubnetB
+    LambdaSecurityGroupId:
+      Description: Lambda Security Group ID
+      Value:
+        Ref: LambdaSecurityGroup
