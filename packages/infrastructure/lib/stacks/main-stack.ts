@@ -6,6 +6,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { DynamoDBTablesConstruct } from '../constructs/dynamodb-tables';
 import { LambdaFunctionsConstruct } from '../constructs/lambda-functions';
+import { VpcConstruct } from '../constructs/vpc';
+import { ElastiCacheRedisConstruct } from '../constructs/elasticache-redis';
 import { LambdaFunctions, DynamoDBTables, EnvironmentConfig } from '../types';
 
 export interface MainStackProps extends cdk.StackProps {
@@ -26,6 +28,18 @@ export class MainStack extends cdk.Stack {
     // Load environment variables from env.json
     const envConfig = this.loadEnvConfig();
 
+    // Create VPC and networking
+    const vpcConstruct = new VpcConstruct(this, 'Vpc', {
+      stage: this.stage,
+    });
+
+    // Create ElastiCache Redis
+    const redisConstruct = new ElastiCacheRedisConstruct(this, 'Redis', {
+      vpc: vpcConstruct.vpc,
+      securityGroup: vpcConstruct.redisSecurityGroup,
+      stage: this.stage,
+    });
+
     // Create DynamoDB tables
     const tablesConstruct = new DynamoDBTablesConstruct(this, 'Tables', {
       stage: this.stage,
@@ -35,12 +49,20 @@ export class MainStack extends cdk.Stack {
     // Create SQS Queue
     this.bugResponseQueue = this.createSQSQueue();
 
+    // Update environment config with Redis endpoint
+    const updatedEnvConfig = {
+      ...envConfig,
+      REDIS_URL: `redis://${redisConstruct.endpoint}:${redisConstruct.port}`,
+    };
+
     // Create Lambda functions
     const lambdaConstruct = new LambdaFunctionsConstruct(this, 'LambdaFunctions', {
       stage: this.stage,
       tables: this.tables,
       bugResponseQueue: this.bugResponseQueue,
-      envConfig,
+      envConfig: updatedEnvConfig,
+      vpc: vpcConstruct.vpc,
+      securityGroup: vpcConstruct.lambdaSecurityGroup,
     });
     this.lambdaFunctions = lambdaConstruct.functions;
 

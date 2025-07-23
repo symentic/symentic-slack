@@ -5,6 +5,7 @@ import * as iam from 'aws-cdk-lib/aws-iam';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as ec2 from 'aws-cdk-lib/aws-ec2';
 import { Construct } from 'constructs';
 import * as path from 'path';
 import { LambdaFunctions, DynamoDBTables, EnvironmentConfig } from '../types';
@@ -14,6 +15,8 @@ export interface LambdaFunctionsConstructProps {
   tables: DynamoDBTables;
   bugResponseQueue: sqs.Queue;
   envConfig: EnvironmentConfig;
+  vpc?: ec2.Vpc;
+  securityGroup?: ec2.SecurityGroup;
 }
 
 export class LambdaFunctionsConstruct extends Construct {
@@ -23,7 +26,7 @@ export class LambdaFunctionsConstruct extends Construct {
   constructor(scope: Construct, id: string, props: LambdaFunctionsConstructProps) {
     super(scope, id);
 
-    const { stage, tables, bugResponseQueue, envConfig } = props;
+    const { stage, tables, bugResponseQueue, envConfig, vpc, securityGroup } = props;
 
     // Create Lambda execution role
     this.role = this.createLambdaRole(tables, bugResponseQueue);
@@ -54,7 +57,7 @@ export class LambdaFunctionsConstruct extends Construct {
     // Create Lambda functions
     const functions: any = {};
     functionDefinitions.forEach(def => {
-      const fn = new lambdaNodejs.NodejsFunction(this, `${def.name}Function`, {
+      const functionProps: lambdaNodejs.NodejsFunctionProps = {
         functionName: `semantic-slack-bot-${stage}-${def.name}`,
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: def.handler,
@@ -70,8 +73,15 @@ export class LambdaFunctionsConstruct extends Construct {
           format: lambdaNodejs.OutputFormat.CJS, // CommonJS format
           target: 'node20',
         },
-      });
+        // Add VPC configuration if provided
+        vpc: vpc,
+        vpcSubnets: vpc ? {
+          subnetType: ec2.SubnetType.PRIVATE_WITH_EGRESS,
+        } : undefined,
+        securityGroups: securityGroup ? [securityGroup] : undefined,
+      };
 
+      const fn = new lambdaNodejs.NodejsFunction(this, `${def.name}Function`, functionProps);
       functions[def.name] = fn;
     });
 
@@ -90,6 +100,7 @@ export class LambdaFunctionsConstruct extends Construct {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaVPCAccessExecutionRole'), // For VPC access
       ],
     });
 
