@@ -76,6 +76,9 @@ export class MainStack extends cdk.Stack {
       GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET!,
       GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI!,
       INTERNAL_API_KEY: process.env.INTERNAL_API_KEY!,
+      REDIS_URL: process.env.REDIS_URL,
+      REDIS_PASSWORD: process.env.REDIS_PASSWORD,
+      AWS_REGION: process.env.AWS_REGION,
     };
   }
 

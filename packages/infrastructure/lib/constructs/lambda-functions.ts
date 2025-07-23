@@ -123,7 +123,7 @@ export class LambdaFunctionsConstruct extends Construct {
     bugResponseQueue: sqs.Queue,
     envConfig: EnvironmentConfig
   ): { [key: string]: string } {
-    return {
+    const env: { [key: string]: string } = {
       STAGE: stage,
       SLACK_BOT_TOKEN: envConfig.SLACK_BOT_TOKEN,
       SLACK_SIGNING_SECRET: envConfig.SLACK_SIGNING_SECRET,
@@ -143,5 +143,16 @@ export class LambdaFunctionsConstruct extends Construct {
       EXECUTIONS_TABLE: tables.executionsTable.tableName,
       BUG_RESPONSE_QUEUE_URL: bugResponseQueue.queueUrl,
     };
+
+    // Add optional environment variables if they exist
+    if (envConfig.REDIS_URL) {
+      env.REDIS_URL = envConfig.REDIS_URL;
+    }
+    if (envConfig.REDIS_PASSWORD) {
+      env.REDIS_PASSWORD = envConfig.REDIS_PASSWORD;
+    }
+    // AWS_REGION is automatically set by Lambda runtime
+
+    return env;
   }
 }
