@@ -1,0 +1,31 @@
+{
+  "name": "@symentic/infrastructure",
+  "version": "1.0.0",
+  "description": "CDK infrastructure for Symentic Slack Bot",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist cdk.out",
+    "cdk": "cdk",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --all --require-approval never",
+    "deploy:prod": "cdk deploy --all --require-approval never --context stage=prod",
+    "destroy": "cdk destroy --all --force",
+    "diff": "cdk diff"
+  },
+  "dependencies": {
+    "@symentic/core": "1.0.0",
+    "@symentic/lambdas": "1.0.0",
+    "aws-cdk-lib": "^2.128.0",
+    "constructs": "^10.3.0",
+    "dotenv": "^16.4.5",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.26",
+    "aws-cdk": "^2.128.0",
+    "esbuild": "^0.25.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.0-dev.20241031"
+  }
+}

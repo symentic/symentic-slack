@@ -1,16 +1,25 @@
 {
-  "name": "semantic-slack-bot",
+  "name": "symentic-slack",
   "version": "1.0.0",
   "description": "Master AI agent Slack bot for Symentic platform",
-  "main": "dist/index.js",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "build": "tsc",
-    "clean": "rm -rf dist",
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "start": "node dist/index.js",
-    "test": "jest",
-    "lint": "eslint src --ext .ts",
-    "deploy": "serverless deploy"
+    "build": "npm run build:core && npm run build:lambdas && npm run build:infra",
+    "build:core": "npm run build -w @symentic/core",
+    "build:lambdas": "npm run build -w @symentic/lambdas",
+    "build:infra": "npm run build -w @symentic/infrastructure",
+    "clean": "npm run clean -ws",
+    "test": "npm run test -ws",
+    "lint": "npm run lint -ws",
+    "cdk": "npm run cdk -w @symentic/infrastructure",
+    "cdk:synth": "npm run synth -w @symentic/infrastructure",
+    "cdk:deploy": "npm run deploy -w @symentic/infrastructure",
+    "cdk:deploy:prod": "npm run deploy:prod -w @symentic/infrastructure",
+    "cdk:destroy": "npm run destroy -w @symentic/infrastructure",
+    "cdk:diff": "npm run diff -w @symentic/infrastructure"
   },
   "keywords": [
     "slack",
@@ -41,6 +50,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
+    "@aws-cdk/assert": "^2.68.0",
     "@types/aws-lambda": "^8.10.134",
     "@types/express": "^4.17.21",
     "@types/jest": "^29.5.12",
@@ -48,6 +58,8 @@
     "@types/uuid": "^9.0.8",
     "@typescript-eslint/eslint-plugin": "^7.1.0",
     "@typescript-eslint/parser": "^7.1.0",
+    "aws-cdk-lib": "^2.206.0",
+    "constructs": "^10.4.2",
     "eslint": "^8.57.0",
     "jest": "^29.7.0",
     "serverless": "^3.38.0",

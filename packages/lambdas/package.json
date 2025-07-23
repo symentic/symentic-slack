@@ -1,0 +1,22 @@
+{
+  "name": "@symentic/lambdas",
+  "version": "1.0.0",
+  "description": "Lambda function handlers",
+  "private": true,
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@symentic/core": "1.0.0",
+    "@slack/bolt": "^3.17.1",
+    "aws-lambda": "^1.0.7"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.143",
+    "@types/node": "^20.11.26",
+    "typescript": "^5.8.0-dev.20241031"
+  }
+}

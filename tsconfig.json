@@ -1,25 +1,22 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "commonjs",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "moduleResolution": "node",
-    "allowSyntheticDefaultImports": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true
+    "composite": false,
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@symentic/core": ["packages/core/src"],
+      "@symentic/core/*": ["packages/core/src/*"],
+      "@symentic/lambdas": ["packages/lambdas/src"],
+      "@symentic/lambdas/*": ["packages/lambdas/src/*"]
+    }
   },
-  "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "**/*.test.ts"]
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/lambdas" },
+    { "path": "./packages/infrastructure" }
+  ],
+  "files": [],
+  "include": [],
+  "exclude": ["**/node_modules", "**/dist"]
 }

@@ -1,6 +1,6 @@
-# Semantic Slack Bot
+# Symentic Slack Bot
 
-A production-ready Node.js Slack bot that acts as the master AI agent for the Symentic platform. This bot manages a hierarchy of child agents, maintains short and long-term memory, and integrates with Google Calendar for automatic meeting scheduling.
+A production-ready Slack bot built as a monorepo using AWS CDK, Lambda, and Step Functions. The bot acts as an intelligent AI agent for the Symentic platform, handling bug reports, scheduling meetings, and managing workflows.
 
 ## Features
 
@@ -13,24 +13,39 @@ A production-ready Node.js Slack bot that acts as the master AI agent for the Sy
 - **Internal REST API**: Developer endpoints for accessing bot data
 - **AWS Lambda Deployment**: Serverless architecture for scalability
 
+## Project Structure
+
+This is a monorepo project organized into three main packages:
+
+```
+packages/
+├── core/           # Shared business logic and services
+├── lambdas/        # AWS Lambda function handlers  
+└── infrastructure/ # AWS CDK infrastructure code
+```
+
 ## Architecture
 
+- **Infrastructure**: AWS CDK (TypeScript)
 - **Compute**: AWS Lambda behind API Gateway
-- **Short-term Memory**: Redis
+- **Orchestration**: AWS Step Functions
+- **Queue**: AWS SQS
+- **Short-term Memory**: In-memory (Redis optional)
 - **Long-term Memory**: DynamoDB
-- **LLM**: OpenAI GPT-4
+- **LLM**: OpenAI GPT-3.5/GPT-4o-mini/GPT-4o
 - **Calendar**: Google Calendar API
 
 ## Setup
 
 ### Prerequisites
 
-- Node.js 18+
-- AWS Account with Lambda access
+- Node.js 20+
+- AWS Account with appropriate permissions
+- AWS CLI configured
+- AWS CDK CLI: `npm install -g aws-cdk`
 - Slack App with Bot Token
 - OpenAI API Key
 - Google Cloud Project with Calendar API enabled
-- Redis instance
 
 ### Installation
 
@@ -93,17 +108,34 @@ Lint:
 npm run lint
 ```
 
-### Deployment
+### Deployment (AWS CDK)
 
-Deploy to AWS Lambda:
+1. Bootstrap CDK (first time only):
 ```bash
-npm run deploy
+npm run cdk:bootstrap
 ```
 
-Or using Serverless directly:
+2. Synthesize CloudFormation templates:
 ```bash
-serverless deploy --stage prod
+npm run cdk:synth
 ```
+
+3. Deploy all stacks:
+```bash
+npm run cdk:deploy
+```
+
+For production deployment:
+```bash
+npm run cdk:deploy:prod
+```
+
+To destroy all resources:
+```bash
+npm run cdk:destroy
+```
+
+See `infrastructure/README.md` for detailed CDK documentation.
 
 ## API Endpoints
 

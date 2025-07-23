@@ -12,6 +12,8 @@ build/
 *.js
 *.js.map
 *.d.ts
+!*.config.js
+!jest.config.js
 
 # Serverless
 .serverless/
@@ -49,4 +51,10 @@ temp/
 
 # Keep TypeScript source files
 !src/**/*.ts
-!*.config.tsenv.json
+!*.config.ts
+
+# CDK specific
+env.json
+infrastructure/cdk.out/
+infrastructure/dist/
+cdk.out/
