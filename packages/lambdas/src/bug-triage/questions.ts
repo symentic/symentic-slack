@@ -1,6 +1,18 @@
 import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
 
+interface BugReportData {
+  description: string;
+  reproductionSteps?: string;
+  environment?: string;
+  impact?: string;
+  errorMessages?: string;
+  reportedBy?: string;
+  channel?: string;
+  timestamp?: string;
+  severity?: string;
+}
+
 interface GenerateQuestionsEvent {
   analysis?: {
     Payload?: {
@@ -13,10 +25,8 @@ interface GenerateQuestionsEvent {
     missingInformation?: string[];
     category?: string;
   };
-  bugReport: {
-    description: string;
-    reproductionSteps?: string;
-    environment?: string;
+  bugReport: BugReportData | {
+    Payload: BugReportData;
   };
   attemptCount: number;
 }
@@ -43,12 +53,17 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
       };
     }
     
+    // Handle nested payload structure from Step Functions
+    const bugReportData = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+    
     // Generate contextual questions based on what's missing
     const result = await openAIService.generateContextualFollowUps({
-      description: event.bugReport.description,
+      description: bugReportData.description,
       currentInfo: {
-        reproductionSteps: event.bugReport.reproductionSteps,
-        environment: event.bugReport.environment
+        reproductionSteps: bugReportData.reproductionSteps,
+        environment: bugReportData.environment,
+        impact: bugReportData.impact,
+        errorMessages: bugReportData.errorMessages
       },
       previousQuestions: [], // TODO: Track previous questions
       userResponses: [] // TODO: Track user responses

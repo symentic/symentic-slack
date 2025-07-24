@@ -68,14 +68,25 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
 Current bug context: ${JSON.stringify(event.bugReport)}
 Missing information: ${analysisData.missingInformation.join(', ')}
 
-Extract any of these if mentioned:
-- Reproduction steps
-- Environment details (browser, OS, device)
-- Impact/severity description
-- Error messages
-- Frequency of occurrence
+Extract information and map it to these fields:
+- reproductionSteps: What steps the user took (e.g., "went to page, pressed pay button")
+- environment: Browser, OS, device, or context (e.g., "checkout page", "payment form")
+- impact: What happened or didn't happen (e.g., "payment not processed", "transaction failed")
+- errorMessages: Any error messages shown (e.g., "unexpected error", "undefined")
+- frequency: How often it happens
 
-Return JSON with extracted fields and confidence score (0-1).`;
+Also extract payment-specific details if mentioned:
+- Payment method (credit card, PayPal, etc.)
+- Transaction stage (checkout, processing, confirmation)
+- Payment status (failed, pending, not processed)
+
+Map the information to the most appropriate field above. For example:
+- "pressed pay button" → reproductionSteps
+- "unexpected error" → errorMessages
+- "payment was not processed" → impact
+- "credit card" → environment (include with other context)
+
+Return JSON with extractedInfo object containing the mapped fields and confidence score (0-1).`;
 
     const userPrompt = `User response: ${responseData.text}`;
     
@@ -126,6 +137,23 @@ function extractBasicInfo(text: string): ProcessedResponse['extractedInfo'] {
     info.impact = 'All users affected';
   } else if (text.includes('can\'t') || text.includes('cannot') || text.includes('unable')) {
     info.impact = 'Users unable to complete action';
+  } else if (text.includes('not processed') || text.includes('failed')) {
+    info.impact = 'Transaction/payment not processed';
+  }
+  
+  // Look for error messages
+  if (text.includes('error') || text.includes('undefined')) {
+    const errorMatch = text.match(/(\w+\s+error|error:\s*[^.]+|undefined|exception)/i);
+    if (errorMatch) {
+      info.errorMessages = errorMatch[0];
+    }
+  }
+  
+  // Look for payment-specific info
+  const paymentMethods = ['credit card', 'debit card', 'paypal', 'stripe', 'payment'];
+  const foundPayment = paymentMethods.find(p => text.toLowerCase().includes(p));
+  if (foundPayment) {
+    info.environment = (info.environment || '') + ` Payment: ${foundPayment}`;
   }
   
   return info;

@@ -57,6 +57,8 @@ export class OpenAIService {
     reproductionSteps?: string;
     environment?: string;
     impact?: string;
+    errorMessages?: string;
+    frequency?: string;
   }): Promise<{
     completenessScore: number; // 0-100
     qualityRating: number; // 1-10
@@ -81,7 +83,15 @@ Consider these factors:
 - Error messages or logs
 - Expected vs actual behavior
 
-Respond in JSON format.`;
+IMPORTANT: Respond with valid JSON in this exact format:
+{
+  "completenessScore": <number 0-100>,
+  "qualityRating": <number 1-10>,
+  "missingInformation": ["item1", "item2"],
+  "followUpQuestions": ["question1", "question2"],
+  "confidence": <number 0-1>,
+  "category": "UI|Backend|Performance|Security|Other"
+}`;
 
     const userPrompt = `Bug Report:
 Description: ${bugInfo.description}
@@ -96,19 +106,32 @@ ${bugInfo.impact ? `Impact: ${bugInfo.impact}` : 'Impact: Not provided'}`;
       const response = await this.classifyWithModel(systemPrompt, userPrompt, model);
       const analysis = JSON.parse(response);
       
+      // Validate and ensure numeric values
+      const completenessScore = typeof analysis.completenessScore === 'number' 
+        ? Math.min(100, Math.max(0, analysis.completenessScore)) 
+        : 0;
+      
+      const qualityRating = typeof analysis.qualityRating === 'number'
+        ? Math.min(10, Math.max(1, analysis.qualityRating))
+        : 1;
+        
+      const confidence = typeof analysis.confidence === 'number'
+        ? Math.min(1, Math.max(0, analysis.confidence))
+        : 0;
+      
       return {
-        completenessScore: analysis.completenessScore || 0,
-        qualityRating: analysis.qualityRating || 1,
-        missingInformation: analysis.missingInformation || [],
-        followUpQuestions: analysis.followUpQuestions || [],
-        confidence: analysis.confidence || 0,
-        category: analysis.category
+        completenessScore,
+        qualityRating,
+        missingInformation: Array.isArray(analysis.missingInformation) ? analysis.missingInformation : [],
+        followUpQuestions: Array.isArray(analysis.followUpQuestions) ? analysis.followUpQuestions : [],
+        confidence,
+        category: analysis.category || 'general'
       };
     } catch (error) {
       console.error('Bug quality analysis failed:', error);
-      // Fallback response
+      // Fallback response - but don't hardcode a low completeness score
       return {
-        completenessScore: 30,
+        completenessScore: 0, // Let the caller calculate this
         qualityRating: 3,
         missingInformation: ['reproduction steps', 'environment details', 'impact'],
         followUpQuestions: [

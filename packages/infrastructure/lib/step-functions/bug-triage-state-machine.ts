@@ -169,7 +169,7 @@ export class BugTriageStateMachine extends Construct {
       incrementAttempt: new stepfunctions.Pass(this, 'IncrementAttempt', {
         parameters: {
           'attemptCount.$': 'States.MathAdd($.attemptCount, 1)',
-          'bugReport.$': '$.bugReport',
+          'bugReport.$': '$.bugReport.Payload',
           'context.$': '$.context',
           'threadTs.$': '$.threadTs',
           'bugId.$': '$.bugId',
@@ -194,6 +194,7 @@ export class BugTriageStateMachine extends Construct {
       checkIfCancelled: new stepfunctions.Choice(this, 'CheckIfCancelled'),
       checkMaxAttempts: new stepfunctions.Choice(this, 'CheckMaxAttempts'),
       checkIfHighSeverity: new stepfunctions.Choice(this, 'CheckIfHighSeverity'),
+      checkUpdatedCompleteness: new stepfunctions.Choice(this, 'CheckUpdatedCompleteness'),
     };
   }
 
@@ -244,8 +245,17 @@ export class BugTriageStateMachine extends Construct {
     tasks.cancelBugReport.next(states.bugReportCancelled);
 
     tasks.updateBugReport
-      .next(states.incrementAttempt)
-      .next(states.checkMaxAttempts);
+      .next(states.checkUpdatedCompleteness);
+    
+    // Check if updated bug report is complete
+    states.checkUpdatedCompleteness
+      .when(
+        stepfunctions.Condition.numberGreaterThanEquals('$.bugReport.Payload.completenessScore', 80),
+        tasks.findRelevantEngineers
+      )
+      .otherwise(states.incrementAttempt);
+    
+    states.incrementAttempt.next(states.checkMaxAttempts);
 
     tasks.maxAttemptsReached.next(states.bugReportFailed);
 
