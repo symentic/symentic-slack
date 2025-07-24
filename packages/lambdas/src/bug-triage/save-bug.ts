@@ -1,8 +1,10 @@
 import { Handler } from 'aws-lambda';
-import { DynamoDB } from 'aws-sdk';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { BugReport } from '@symentic/core';
 
-const dynamodb = new DynamoDB.DocumentClient();
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
 
 interface SaveBugEvent {
   bugReport: BugReport | { Payload: BugReport };
@@ -51,19 +53,20 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   const bugReportData: BugReport = {
     ...bugReport,
     bugId,
-    assignedTo: engineers?.map((e) => e.userId) || [],
-    triageChannel: channel?.channelId,
-    meetingId: meeting?.meetingId,
+    assignedTo: Array.isArray(engineers) ? engineers.map((e: any) => e.userId) : [],
+    triageChannel: channel && typeof channel === 'object' && 'channelId' in channel ? channel.channelId : undefined,
+    meetingId: meeting && typeof meeting === 'object' && 'meetingId' in meeting ? meeting.meetingId : undefined,
     status: 'triaged',
     createdAt: bugReport.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
   
   try {
-    await dynamodb.put({
+    const command = new PutCommand({
       TableName: process.env.BUG_REPORTS_TABLE!,
       Item: bugReportData
-    }).promise();
+    });
+    await dynamodb.send(command);
     
     console.log('Bug report saved successfully:', bugId);
     
@@ -94,10 +97,11 @@ async function createBugEngram(bugReport: BugReport) {
   };
   
   try {
-    await dynamodb.put({
+    const command = new PutCommand({
       TableName: process.env.ENGRAMS_TABLE!,
       Item: engram
-    }).promise();
+    });
+    await dynamodb.send(command);
     
     console.log('Created engram for bug report');
   } catch (error) {

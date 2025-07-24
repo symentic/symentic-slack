@@ -39,7 +39,7 @@ export class LambdaFunctionsConstruct extends Construct {
 
     // Define Lambda functions
     const functionDefinitions = [
-      { name: 'router', entry: 'src/router/index.ts', handler: 'handler', memory: 512 },
+      { name: 'router', entry: 'src/router/index.ts', handler: 'handler', memory: 1024 },
       { name: 'bugAnalyze', entry: 'src/bug-triage/analyze.ts', handler: 'handler' },
       { name: 'bugQuestions', entry: 'src/bug-triage/questions.ts', handler: 'handler' },
       { name: 'bugProcessResponse', entry: 'src/bug-triage/process-response.ts', handler: 'handler' },
@@ -64,12 +64,12 @@ export class LambdaFunctionsConstruct extends Construct {
         entry: path.join(__dirname, '../../../lambdas', def.entry),
         environment,
         memorySize: def.memory || 256,
-        timeout: cdk.Duration.seconds(30),
+        timeout: def.name === 'router' ? cdk.Duration.seconds(10) : cdk.Duration.seconds(30),
         role: this.role,
         logRetention: logs.RetentionDays.ONE_WEEK,
         bundling: {
-          externalModules: ['aws-sdk'], // AWS SDK is available in the Lambda runtime
-          nodeModules: ['@slack/bolt', '@slack/web-api', 'aws-lambda'], // Include these in bundle
+          externalModules: [], // AWS SDK v3 needs to be bundled in Node.js 20.x runtime
+          // Don't mark Slack modules as external - they need to be bundled
           format: lambdaNodejs.OutputFormat.CJS, // CommonJS format
           target: 'node20',
         },

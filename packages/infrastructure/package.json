@@ -9,8 +9,12 @@
     "cdk": "cdk",
     "synth": "cdk synth",
     "deploy": "cdk deploy --all --require-approval never",
+    "deploy:dev": "cdk deploy --all --require-approval never --context stage=${CDK_STAGE:-dev-$USER}",
     "deploy:prod": "cdk deploy --all --require-approval never --context stage=prod",
+    "diff:dev": "cdk diff --all --context stage=${CDK_STAGE:-dev-$USER}",
+    "diff:prod": "cdk diff --all --context stage=prod",
     "destroy": "cdk destroy --all --force",
+    "destroy:dev": "cdk destroy --all --force --context stage=${CDK_STAGE:-dev-$USER}",
     "diff": "cdk diff"
   },
   "dependencies": {

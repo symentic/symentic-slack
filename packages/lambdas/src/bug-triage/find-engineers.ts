@@ -1,7 +1,9 @@
 import { Handler } from 'aws-lambda';
-import { DynamoDB } from 'aws-sdk';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 
-const dynamodb = new DynamoDB.DocumentClient();
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
 
 interface FindEngineersEvent {
   bugReport: {
@@ -46,7 +48,8 @@ export const handler: Handler<FindEngineersEvent, Engineer[]> = async (event) =>
       Limit: 5
     };
     
-    const result = await dynamodb.query(params).promise();
+    const command = new QueryCommand(params);
+    const result = await dynamodb.send(command);
     
     if (!result.Items || result.Items.length === 0) {
       console.log('No engineers found for category:', category);

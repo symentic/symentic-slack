@@ -78,9 +78,11 @@ export class BugTriageStateMachine extends Construct {
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
           channelId: stepfunctions.JsonPath.objectAt('$.context.channelId'),
           attemptCount: stepfunctions.JsonPath.objectAt('$.attemptCount'),
+          isTaskTokenMessage: true, // Flag to indicate this is a task token message
         }),
         integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-        timeout: cdk.Duration.hours(48),
+        taskTimeout: stepfunctions.Timeout.duration(cdk.Duration.hours(48)),
+        resultPath: '$.userResponse',
       }),
 
       processUserResponse: new stepfunctionsTasks.LambdaInvoke(this, 'ProcessUserResponse', {
@@ -133,8 +135,8 @@ export class BugTriageStateMachine extends Construct {
         lambdaFunction: lambdaFunctions.slackNotify,
         payload: stepfunctions.TaskInput.fromObject({
           action: 'timeoutNotification',
-          context: stepfunctions.JsonPath.objectAt('$.context'),
-          threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
+          context: stepfunctions.JsonPath.objectAt('$$.Execution.Input.context'),
+          threadTs: stepfunctions.JsonPath.objectAt('$$.Execution.Input.threadTs'),
         }),
         resultPath: '$.timeoutNotificationResult',
       }),

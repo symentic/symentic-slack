@@ -47,7 +47,7 @@ export class MainStack extends cdk.Stack {
     this.tables = tablesConstruct.tables;
 
     // Create SQS Queue
-    this.bugResponseQueue = this.createSQSQueue();
+    this.bugResponseQueue = this.createSQSQueue('BugResponseQueue');
 
     // Update environment config with Redis endpoint
     const updatedEnvConfig = {
@@ -103,9 +103,9 @@ export class MainStack extends cdk.Stack {
     };
   }
 
-  private createSQSQueue(): sqs.Queue {
-    return new sqs.Queue(this, 'BugResponseQueue', {
-      queueName: `BugResponseQueue-${this.stage}`,
+  private createSQSQueue(name: string): sqs.Queue {
+    return new sqs.Queue(this, name, {
+      queueName: `${name}-${this.stage}`,
       visibilityTimeout: cdk.Duration.seconds(300),
       retentionPeriod: cdk.Duration.hours(1),
     });

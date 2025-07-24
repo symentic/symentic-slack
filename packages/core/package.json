@@ -13,8 +13,9 @@
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.515.0",
     "@aws-sdk/lib-dynamodb": "^3.515.0",
+    "@aws-sdk/client-sfn": "^3.515.0",
+    "@aws-sdk/client-sqs": "^3.515.0",
     "@slack/web-api": "^7.0.2",
-    "aws-sdk": "^2.1573.0",
     "googleapis": "^135.0.0",
     "openai": "^4.38.5",
     "redis": "^4.6.13",

@@ -1,13 +1,24 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { App, AwsLambdaReceiver } from '@slack/bolt';
-import { StepFunctions } from 'aws-sdk';
+import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { intentClassifier } from '@symentic/core';
 import { SlackMessage } from '@symentic/core';
 import { handleThreadResponse, storeWorkflowReference } from './thread-response-handler';
 import { executionTracker } from '@symentic/core';
 import { redisService } from '@symentic/core';
 
-const stepFunctions = new StepFunctions();
+// Initialize Step Functions client with explicit configuration
+const stepFunctions = new SFNClient({
+  region: process.env.AWS_REGION || 'us-east-1',
+  requestHandler: {
+    requestTimeout: 5000,
+    httpsAgent: {
+      connectTimeout: 3000
+    }
+  }
+});
+
+console.log('Step Functions client initialized with region:', process.env.AWS_REGION || 'us-east-1');
 
 // Initialize AWS Lambda receiver
 const awsLambdaReceiver = new AwsLambdaReceiver({
@@ -88,23 +99,38 @@ app.message(async ({ message, say, client, body }) => {
     console.log(`Intent classified: ${intent.intent} (${intent.confidence})`);
     
     // Route based on intent
+    console.log('Checking bug condition:', {
+      startsWith: intent.intent.startsWith('bug.'),
+      notResponse: intent.intent !== 'bug.response',
+      intentValue: intent.intent
+    });
     if (intent.intent.startsWith('bug.') && intent.intent !== 'bug.response') {
+      console.log('Bug report condition met, sending acknowledgment...');
       // Send immediate acknowledgment first (to meet Slack's 3s timeout)
       await say({
         text: '🐛 I\'ve detected a bug report. Starting the triage process...',
         thread_ts: msg.thread_ts || msg.ts
       });
       
-      // Start bug triage workflow after acknowledgment
-      // This prevents timeout issues
-      startBugTriageWorkflow(msg, intent, client).catch(error => {
+      // Start the workflow - we'll await it to ensure it runs
+      try {
+        console.log('Starting bug triage workflow...');
+        await startBugTriageWorkflow(msg, intent, client);
+        console.log('Bug triage workflow started successfully');
+      } catch (error) {
         console.error('Failed to start workflow:', error);
-        // Optionally notify user of failure
-        say({
-          text: '❌ Sorry, I encountered an error starting the bug triage process.',
-          thread_ts: msg.thread_ts || msg.ts
-        });
-      });
+        console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+        console.error('Error details:', JSON.stringify(error, null, 2));
+        // Notify user of failure
+        try {
+          await say({
+            text: '❌ Sorry, I encountered an error starting the bug triage process. Please try again.',
+            thread_ts: msg.thread_ts || msg.ts
+          });
+        } catch (sayError) {
+          console.error('Failed to send error message:', sayError);
+        }
+      }
     } else if (intent.intent.startsWith('calendar.')) {
       // Start calendar workflow
       await say({
@@ -115,6 +141,7 @@ app.message(async ({ message, say, client, body }) => {
       // Low confidence - don't respond
       console.log('Low confidence intent, not responding');
     } else {
+      console.log('No specific handler for intent:', intent.intent);
       // General response
       await say({
         text: 'I can help you with bug reports, scheduling meetings, and managing tasks. What would you like to do?',
@@ -136,27 +163,30 @@ async function startBugTriageWorkflow(
   intent: { intent: string; entities?: { severity?: string }; confidence: number },
   client: { token?: string } // WebClient from @slack/bolt
 ) {
-  // Construct Step Function ARN dynamically
-  const _region = process.env.AWS_REGION || 'us-east-1';
-  const stage = process.env.STAGE || 'prod';
+  console.log('=== startBugTriageWorkflow STARTED ===');
+  console.log('Message:', {
+    text: message.text,
+    user: message.user,
+    channel: message.channel,
+    ts: message.ts
+  });
   
-  // First try to list state machines to find the correct ARN
   try {
-    const listResult = await stepFunctions.listStateMachines({
-      maxResults: 100
-    }).promise();
+    // Construct Step Function ARN dynamically
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const stage = process.env.STAGE || 'prod';
+    const accountId = '842733143746'; // Your AWS account ID
     
-    const stateMachine = listResult.stateMachines?.find(sm => 
-      sm.name === `BugTriageStateMachine-${stage}`
-    );
+    console.log('Environment:', { region, stage, accountId });
     
-    if (!stateMachine?.stateMachineArn) {
-      throw new Error(`State machine BugTriageStateMachine-${stage} not found`);
-    }
+    // Use the known ARN directly to avoid the listStateMachines call
+    const stateMachineArn = `arn:aws:states:${region}:${accountId}:stateMachine:BugTriageStateMachine-${stage}`;
+    console.log('Using state machine ARN:', stateMachineArn);
     
     const bugId = `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     const threadTs = message.thread_ts || message.ts;
     
+    console.log('Creating execution record...');
     // Create execution record in our tracking table
     const execution = await executionTracker.createExecution({
       threadId: threadTs,
@@ -166,32 +196,35 @@ async function startBugTriageWorkflow(
       agentType: 'bug_triage',
       originalMessage: message.text || ''
     });
+    console.log('Created execution:', execution.executionId);
     
     const params = {
-      stateMachineArn: stateMachine.stateMachineArn,
+      stateMachineArn: stateMachineArn,
       name: `bug-triage-${message.user}-${Date.now()}`,
       input: JSON.stringify({
-      bugId,
-      bugReport: {
-        description: message.text || '',
-        reportedBy: message.user,
-        channel: message.channel,
-        timestamp: new Date().toISOString(),
-        severity: intent.entities?.severity || 'medium'
-      },
-      context: {
-        userId: message.user,
-        channelId: message.channel,
-        teamId: message.team,
-        slackClient: client.token
-      },
-      threadTs,
-      attemptCount: 0,
-      executionId: execution.executionId
-    })
-  };
-  
-    const result = await stepFunctions.startExecution(params).promise();
+        bugId,
+        bugReport: {
+          description: message.text || '',
+          reportedBy: message.user,
+          channel: message.channel,
+          timestamp: new Date().toISOString(),
+          severity: intent.entities?.severity || 'medium'
+        },
+        context: {
+          userId: message.user,
+          channelId: message.channel,
+          teamId: message.team,
+          slackClient: client.token
+        },
+        threadTs,
+        attemptCount: 0,
+        executionId: execution.executionId
+      })
+    };
+    
+    console.log('Starting Step Functions execution with params:', JSON.stringify(params, null, 2));
+    const command = new StartExecutionCommand(params);
+    const result = await stepFunctions.send(command);
     console.log('Started bug triage workflow:', result.executionArn);
     
     // Update execution with Step Function ARN
@@ -210,8 +243,13 @@ async function startBugTriageWorkflow(
       'bug_triage',
       result.executionArn
     );
+    
+    console.log('=== startBugTriageWorkflow COMPLETED ===');
   } catch (error) {
-    console.error('Failed to start bug triage workflow:', error);
+    console.error('=== startBugTriageWorkflow FAILED ===');
+    console.error('Error:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    console.error('Error details:', JSON.stringify(error, null, 2));
     throw error;
   }
 }

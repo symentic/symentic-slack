@@ -2,10 +2,17 @@ import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
 
 interface ProcessResponseEvent {
-  response: {
+  response?: {
     text: string;
     userId: string;
     timestamp: string;
+  };
+  userResponse?: {
+    userResponse: {
+      text: string;
+      userId: string;
+      timestamp: string;
+    };
   };
   bugReport: {
     description: string;
@@ -34,7 +41,14 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
   console.log('Processing user response:', JSON.stringify(event, null, 2));
   
   // Handle Step Functions nested payload structure
-  const responseData = event.response?.Payload || event.response;
+  // The response might be in event.userResponse.userResponse due to SQS message structure
+  const responseData = event.userResponse?.userResponse || event.response?.Payload || event.response;
+  
+  if (!responseData || !responseData.text) {
+    console.error('No valid response text found in event:', event);
+    throw new Error('Response text is required');
+  }
+  
   const responseText = responseData.text.toLowerCase().trim();
   
   // Check for cancellation

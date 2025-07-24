@@ -1,9 +1,12 @@
-import { SQS, DynamoDB } from 'aws-sdk';
+import { SQSClient, SendMessageCommand } from '@aws-sdk/client-sqs';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { SlackMessage } from '@symentic/core';
 import { executionTracker } from '@symentic/core';
 
-const sqs = new SQS();
-const dynamodb = new DynamoDB.DocumentClient();
+const sqsClient = new SQSClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
 
 interface ActiveWorkflow {
   workflowType: 'bug_triage' | 'meeting_schedule' | 'task_create';
@@ -68,7 +71,8 @@ async function getActiveWorkflow(
       }
     };
     
-    const result = await dynamodb.get(params).promise();
+    const command = new GetCommand(params);
+    const result = await dynamodb.send(command);
     
     if (!result.Item) {
       return null;
@@ -97,10 +101,13 @@ async function routeToBugTriage(
     throw new Error('BUG_RESPONSE_QUEUE_URL not configured');
   }
   
-  // Update execution tracker with conversation history
+  // Get the execution to find the task token
+  let taskToken = workflow.taskToken;
+  
   if (message.thread_ts) {
     const execution = await executionTracker.getExecutionByThread(message.thread_ts);
     if (execution) {
+      // Update conversation history
       await executionTracker.addConversationMessage(execution.executionId, {
         userId: message.user!,
         message: message.text || '',
@@ -108,19 +115,21 @@ async function routeToBugTriage(
         role: 'user'
       });
       
-      // Store task token if we have it and it's not already stored
-      if (workflow.taskToken && !execution.taskToken) {
-        await executionTracker.updateTaskToken(
-          execution.executionId,
-          workflow.taskToken,
-          workflow.executionArn
-        );
+      // Get task token from execution if not in workflow
+      if (!taskToken && execution.taskToken) {
+        taskToken = execution.taskToken;
+        console.log('Retrieved task token from execution tracker');
       }
     }
   }
   
+  if (!taskToken) {
+    console.error('No task token found for thread:', message.thread_ts);
+    throw new Error('Task token not found for workflow');
+  }
+  
   const messageBody = {
-    taskToken: workflow.taskToken,
+    taskToken: taskToken,
     executionArn: workflow.executionArn,
     bugId: workflow.executionArn.split('-').slice(-1)[0], // Extract from execution name
     userId: message.user,
@@ -133,12 +142,13 @@ async function routeToBugTriage(
     }
   };
   
-  await sqs.sendMessage({
+  const command = new SendMessageCommand({
     QueueUrl: queueUrl,
     MessageBody: JSON.stringify(messageBody)
-  }).promise();
+  });
+  await sqsClient.send(command);
   
-  console.log('Sent bug response to queue');
+  console.log('Sent bug response to queue with task token');
 }
 
 // Helper function to store workflow references
@@ -164,5 +174,6 @@ export async function storeWorkflowReference(
     }
   };
   
-  await dynamodb.put(params).promise();
+  const command = new PutCommand(params);
+  await dynamodb.send(command);
 }
