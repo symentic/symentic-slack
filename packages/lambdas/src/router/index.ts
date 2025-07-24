@@ -137,16 +137,9 @@ app.message(async ({ message, say, client, body }) => {
         text: '📅 I\'ll help you with calendar management. This feature is being migrated to our new architecture.',
         thread_ts: msg.thread_ts || msg.ts
       });
-    } else if (intent.confidence < 0.6) {
-      // Low confidence - don't respond
-      console.log('Low confidence intent, not responding');
     } else {
-      console.log('No specific handler for intent:', intent.intent);
-      // General response
-      await say({
-        text: 'I can help you with bug reports, scheduling meetings, and managing tasks. What would you like to do?',
-        thread_ts: msg.thread_ts || msg.ts
-      });
+      // Low confidence or no specific handler - don't respond
+      console.log(`Not responding - Intent: ${intent.intent}, Confidence: ${intent.confidence}`);
     }
   } catch (error) {
     console.error('Error processing message:', error);

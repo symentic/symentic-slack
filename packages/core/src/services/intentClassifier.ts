@@ -48,9 +48,28 @@ export class IntentClassifier {
 
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
     const { message, userId, channelId, recentContext, threadContext } = options;
+    
+    // Quick filter for obvious non-software bug mentions
+    const insectPatterns = [
+      /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
+      /\b(spider|ant|fly|flies|mosquito|roach|cockroach|beetle)s?\b/i,
+      /\b(pest|infestation|exterminator)\b/i,
+      /\b(crawling|flying)\s+(bug|insect)s?\b/i
+    ];
+    
+    if (insectPatterns.some(pattern => pattern.test(message))) {
+      return {
+        intent: 'general.chatter',
+        confidence: 0.9,
+        entities: {},
+        modelUsed: 'pattern-match',
+        requiresFollowUp: []
+      };
+    }
+    
     const model = this.selectModel(message);
 
-    const systemPrompt = `You are an intent classifier for a Slack bot. Analyze the message and extract:
+    const systemPrompt = `You are an intent classifier for a Slack bot that helps with software development tasks. Analyze the message and extract:
 1. Primary intent (use dot notation like "calendar.schedule", "bug.report", "task.create")
 2. Confidence level (0-1)
 3. Entities (participants, dates, priorities, etc.)
@@ -58,16 +77,29 @@ export class IntentClassifier {
 
 Available intents:
 - calendar.schedule, calendar.check, calendar.cancel, calendar.reschedule
-- bug.report, bug.status, bug.update, bug.response, bug.cancel
+- bug.report, bug.status, bug.update, bug.response, bug.cancel (SOFTWARE/CODE BUGS ONLY)
 - task.create, task.assign, task.status, task.complete
 - reminder.set, reminder.list
 - general.help, general.status, general.greeting, general.chatter, general.cancel
 - query.search, query.ask
 
+IMPORTANT: "bug.report" is ONLY for software bugs, coding errors, system issues, or technical problems.
+DO NOT classify as "bug.report" for:
+- Physical insects or pests (spiders, ants, flies, etc.)
+- Physical defects in buildings or objects
+- Non-technical issues
+
+Context clues for software bugs:
+- Error messages, crashes, unexpected behavior
+- Feature not working, system down, payment failed
+- Code, API, database, server issues
+- Performance problems, UI glitches
+
 Special handling:
 - If in a thread with active bug triage, classify follow-ups as "bug.response"
 - Casual conversation or off-topic messages should be "general.chatter"
 - "Cancel" or "stop" should map to appropriate cancel intent
+- Physical bugs/insects should be "general.chatter"
 
 Respond in JSON format only.`;
 

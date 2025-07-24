@@ -5,7 +5,7 @@ export interface IntentResult {
   intent: string;
   confidence: number;
   entities: Record<string, unknown>;
-  modelUsed: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o';
+  modelUsed: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o' | 'pattern-match';
   requiresFollowUp?: string[];
 }
 
