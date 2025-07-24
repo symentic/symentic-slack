@@ -159,9 +159,6 @@ export class LambdaFunctionsConstruct extends Construct {
     if (envConfig.REDIS_URL) {
       env.REDIS_URL = envConfig.REDIS_URL;
     }
-    if (envConfig.REDIS_PASSWORD) {
-      env.REDIS_PASSWORD = envConfig.REDIS_PASSWORD;
-    }
     // AWS_REGION is automatically set by Lambda runtime
 
     return env;

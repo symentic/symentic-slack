@@ -11,7 +11,19 @@ interface UpdateBugEvent {
     environment?: string;
     impact?: string;
   };
-  newInfo: {
+  processedResponse?: {
+    Payload?: {
+      extractedInfo: {
+        reproductionSteps?: string;
+        environment?: string;
+        impact?: string;
+        errorMessages?: string;
+        frequency?: string;
+      };
+    };
+  };
+  // Legacy field for backward compatibility
+  newInfo?: {
     reproductionSteps?: string;
     environment?: string;
     impact?: string;
@@ -23,10 +35,13 @@ interface UpdateBugEvent {
 export const handler: Handler<UpdateBugEvent> = async (event) => {
   console.log('Updating bug report:', JSON.stringify(event, null, 2));
   
+  // Handle Step Functions nested payload structure
+  const newInfo = event.processedResponse?.Payload?.extractedInfo || event.newInfo || {};
+  
   // Merge new information into bug report
   const updatedBugReport = {
     ...event.bugReport,
-    ...event.newInfo,
+    ...newInfo,
     lastUpdated: new Date().toISOString()
   };
   

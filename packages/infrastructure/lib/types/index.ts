@@ -44,6 +44,5 @@ export interface EnvironmentConfig {
   GOOGLE_REDIRECT_URI: string;
   INTERNAL_API_KEY: string;
   REDIS_URL?: string;
-  REDIS_PASSWORD?: string;
   AWS_REGION?: string;
 }

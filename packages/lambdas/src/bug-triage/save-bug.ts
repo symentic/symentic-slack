@@ -5,17 +5,33 @@ import { BugReport } from '@symentic/core';
 const dynamodb = new DynamoDB.DocumentClient();
 
 interface SaveBugEvent {
-  bugReport: BugReport;
-  engineers?: Array<{
+  bugReport: BugReport | { Payload: BugReport };
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
     userId: string;
     name: string;
   }>;
   meeting?: {
+    Payload?: {
+      meetingId: string;
+      startTime: string;
+      meetingLink?: string;
+    };
+  } | {
     meetingId: string;
     startTime: string;
     meetingLink?: string;
   };
   channel?: {
+    Payload?: {
+      channelId: string;
+      channelName: string;
+    };
+  } | {
     channelId: string;
     channelName: string;
   };
@@ -24,16 +40,22 @@ interface SaveBugEvent {
 export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   console.log('Saving bug report:', JSON.stringify(event, null, 2));
   
-  const bugId = event.bugReport.bugId || `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  // Handle Step Functions nested payload structure
+  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+  const engineers = event.engineers && 'Payload' in event.engineers ? event.engineers.Payload : event.engineers;
+  const meeting = event.meeting && 'Payload' in event.meeting ? event.meeting.Payload : event.meeting;
+  const channel = event.channel && 'Payload' in event.channel ? event.channel.Payload : event.channel;
+  
+  const bugId = bugReport.bugId || `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   
   const bugReportData: BugReport = {
-    ...event.bugReport,
+    ...bugReport,
     bugId,
-    assignedTo: event.engineers?.map(e => e.userId) || [],
-    triageChannel: event.channel?.channelId,
-    meetingId: event.meeting?.meetingId,
+    assignedTo: engineers?.map((e) => e.userId) || [],
+    triageChannel: channel?.channelId,
+    meetingId: meeting?.meetingId,
     status: 'triaged',
-    createdAt: event.bugReport.createdAt || new Date().toISOString(),
+    createdAt: bugReport.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
   

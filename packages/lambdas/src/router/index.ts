@@ -5,6 +5,7 @@ import { intentClassifier } from '@symentic/core';
 import { SlackMessage } from '@symentic/core';
 import { handleThreadResponse, storeWorkflowReference } from './thread-response-handler';
 import { executionTracker } from '@symentic/core';
+import { redisService } from '@symentic/core';
 
 const stepFunctions = new StepFunctions();
 
@@ -17,7 +18,7 @@ const awsLambdaReceiver = new AwsLambdaReceiver({
 const app = new App({
   token: process.env.SLACK_BOT_TOKEN!,
   receiver: awsLambdaReceiver,
-  processBeforeResponse: true, // Process before responding for quick ack
+  processBeforeResponse: true, // Process events before responding
 });
 
 // Simple message filter
@@ -39,8 +40,27 @@ function shouldProcessMessage(message: SlackMessage): boolean {
 }
 
 // Handle all messages
-app.message(async ({ message, say, client }) => {
+app.message(async ({ message, say, client, body }) => {
   const msg = message as SlackMessage;
+  console.log(`Processing message: "${msg.text?.substring(0, 100)}" from user: ${msg.user}`);
+  
+  // Event deduplication using Redis
+  const eventId = (body as { event_id?: string }).event_id;
+  if (eventId) {
+    try {
+      const dedupKey = `slack:event:${eventId}`;
+      const processed = await redisService.getShortTermMemory(dedupKey);
+      if (processed) {
+        console.log(`Duplicate event detected: ${eventId}`);
+        return; // Already processed
+      }
+      // Mark as processed with 5 minute TTL
+      await redisService.setShortTermMemory(dedupKey, true, 300);
+    } catch (error) {
+      console.error('Redis deduplication error:', error);
+      // Continue processing even if Redis fails
+    }
+  }
   
   // Check if this is a thread response first
   if (msg.thread_ts && msg.thread_ts !== msg.ts) {
@@ -69,13 +89,21 @@ app.message(async ({ message, say, client }) => {
     
     // Route based on intent
     if (intent.intent.startsWith('bug.') && intent.intent !== 'bug.response') {
-      // Start bug triage workflow
-      await startBugTriageWorkflow(msg, intent, client);
-      
-      // Send immediate acknowledgment
+      // Send immediate acknowledgment first (to meet Slack's 3s timeout)
       await say({
         text: '🐛 I\'ve detected a bug report. Starting the triage process...',
         thread_ts: msg.thread_ts || msg.ts
+      });
+      
+      // Start bug triage workflow after acknowledgment
+      // This prevents timeout issues
+      startBugTriageWorkflow(msg, intent, client).catch(error => {
+        console.error('Failed to start workflow:', error);
+        // Optionally notify user of failure
+        say({
+          text: '❌ Sorry, I encountered an error starting the bug triage process.',
+          thread_ts: msg.thread_ts || msg.ts
+        });
       });
     } else if (intent.intent.startsWith('calendar.')) {
       // Start calendar workflow
@@ -105,11 +133,11 @@ app.message(async ({ message, say, client }) => {
 // Start bug triage Step Function
 async function startBugTriageWorkflow(
   message: SlackMessage,
-  intent: any,
-  client: any // WebClient from @slack/bolt
+  intent: { intent: string; entities?: { severity?: string }; confidence: number },
+  client: { token?: string } // WebClient from @slack/bolt
 ) {
   // Construct Step Function ARN dynamically
-  const region = process.env.AWS_REGION || 'us-east-1';
+  const _region = process.env.AWS_REGION || 'us-east-1';
   const stage = process.env.STAGE || 'prod';
   
   // First try to list state machines to find the correct ARN
@@ -191,15 +219,20 @@ async function startBugTriageWorkflow(
 // Lambda handler
 export const handler = async (
   event: APIGatewayProxyEvent,
-  context: any,
-  callback: any
+  context: { requestId: string },
+  callback: (error?: Error | null, result?: APIGatewayProxyResult) => void
 ): Promise<APIGatewayProxyResult> => {
-  console.log('Router Lambda invoked:', JSON.stringify(event.headers, null, 2));
+  console.log('Router Lambda invoked:', JSON.stringify({
+    requestId: context.requestId,
+    headers: event.headers,
+    timestamp: new Date().toISOString()
+  }, null, 2));
   
   // Handle URL verification
   if (event.body) {
     try {
       const body = JSON.parse(event.body);
+      console.log('Request body type:', body.type, 'Event ID:', body.event_id);
       if (body.type === 'url_verification') {
         return {
           statusCode: 200,
@@ -208,10 +241,13 @@ export const handler = async (
       }
     } catch (e) {
       // Not JSON, continue
+      console.log('Body parsing error:', e);
     }
   }
   
   // Handle Slack events
   const slackHandler = await awsLambdaReceiver.start();
-  return slackHandler(event, context, callback);
+  const result = await slackHandler(event, context, callback);
+  console.log('Handler completed with result:', result?.statusCode);
+  return result;
 };

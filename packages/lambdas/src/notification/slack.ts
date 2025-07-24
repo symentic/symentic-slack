@@ -11,7 +11,34 @@ interface SlackNotificationEvent {
     slackClient?: string;
   };
   threadTs: string;
-  [key: string]: any;
+  questions?: {
+    Payload?: {
+      questions: string[];
+    };
+  } | {
+    questions: string[];
+  };
+  bugReport?: {
+    Payload?: BugReport;
+  } | BugReport;
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
+    userId: string;
+    name: string;
+  }>;
+  meeting?: {
+    Payload?: {
+      startTime: string;
+      meetingId: string;
+    };
+  } | {
+    startTime: string;
+    meetingId: string;
+  };
 }
 
 export const handler: Handler<SlackNotificationEvent> = async (event) => {
@@ -37,6 +64,10 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
         await sendCompletionMessage(slack, event);
         break;
         
+      case 'maxAttemptsReached':
+        await sendMaxAttemptsMessage(slack, event);
+        break;
+        
       default:
         console.error('Unknown action:', event.action);
     }
@@ -47,7 +78,12 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
 };
 
 async function sendBugQuestions(slack: WebClient, event: SlackNotificationEvent) {
-  const questions = event.questions.questions as string[];
+  if (!event.questions) {
+    throw new Error('Questions not provided');
+  }
+  // Handle Step Functions nested payload structure
+  const questionsData = 'Payload' in event.questions ? event.questions.Payload : event.questions;
+  const questions = questionsData?.questions || [];
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
@@ -95,9 +131,19 @@ async function sendTimeoutMessage(slack: WebClient, event: SlackNotificationEven
 }
 
 async function sendCompletionMessage(slack: WebClient, event: SlackNotificationEvent) {
-  const bugReport = event.bugReport as BugReport;
+  if (!event.bugReport) {
+    throw new Error('Bug report not provided');
+  }
+  // Handle Step Functions nested payload structure
+  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
   
-  const blocks: any[] = [
+  const blocks: Array<{
+    type: string;
+    text?: {
+      type: string;
+      text: string;
+    };
+  }> = [
     {
       type: 'section',
       text: {
@@ -107,29 +153,70 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
     }
   ];
   
-  if (event.engineers && event.engineers.length > 0) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `*Assigned to:* ${event.engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
-      }
-    });
+  // Handle Step Functions nested payload structure for engineers
+  if (event.engineers) {
+    const engineersData = 'Payload' in event.engineers ? event.engineers.Payload : event.engineers;
+    if (engineersData && engineersData.length > 0) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Assigned to:* ${engineersData.map((e) => `<@${e.userId}>`).join(', ')}`
+        }
+      });
+    }
   }
   
+  // Handle Step Functions nested payload structure for meeting
   if (event.meeting) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `*Triage Meeting:* ${new Date(event.meeting.startTime).toLocaleString()}`
-      }
-    });
+    const meetingData = 'Payload' in event.meeting ? event.meeting.Payload : event.meeting;
+    if (meetingData) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Triage Meeting:* ${new Date(meetingData.startTime).toLocaleString()}`
+        }
+      });
+    }
   }
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
     thread_ts: event.threadTs,
     blocks
+  });
+}
+
+async function sendMaxAttemptsMessage(slack: WebClient, event: SlackNotificationEvent) {
+  // Handle Step Functions nested payload structure
+  const bugReportData = event.bugReport && 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+  
+  await slack.chat.postMessage({
+    channel: event.context.channelId,
+    thread_ts: event.threadTs,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '⚠️ *Maximum attempts reached for bug report*'
+        }
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'I was unable to gather enough information after multiple attempts. The bug report has been saved with the available information.'
+        }
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Summary:* ${(bugReportData as BugReport | undefined)?.description || 'No description available'}\n*Status:* Incomplete - manual review required`
+        }
+      }
+    ]
   });
 }

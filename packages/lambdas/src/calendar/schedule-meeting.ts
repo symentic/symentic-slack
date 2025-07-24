@@ -4,16 +4,36 @@ import { WebClient } from '@slack/web-api';
 
 interface ScheduleMeetingEvent {
   bugReport: {
+    Payload?: {
+      bugId: string;
+      description: string;
+      severity?: string;
+      reportedBy?: string;
+    };
+  } | {
     bugId: string;
     description: string;
     severity?: string;
     reportedBy?: string;
   };
-  engineers: Array<{
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
     userId: string;
     name: string;
   }>;
-  availability: {
+  availability?: {
+    Payload?: {
+      suggestedTime?: string;
+      slots: Array<{
+        start: string;
+        end: string;
+      }>;
+    };
+  } | {
     suggestedTime?: string;
     slots: Array<{
       start: string;
@@ -21,6 +41,10 @@ interface ScheduleMeetingEvent {
     }>;
   };
   channel?: {
+    Payload?: {
+      channelId: string;
+    };
+  } | {
     channelId: string;
   };
 }
@@ -36,12 +60,18 @@ interface MeetingResult {
 export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (event) => {
   console.log('Scheduling meeting:', JSON.stringify(event, null, 2));
   
+  // Handle Step Functions nested payload structure
+  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+  const engineers = (event.engineers && 'Payload' in event.engineers ? event.engineers.Payload : event.engineers) || [];
+  const availability = (event.availability && 'Payload' in event.availability ? event.availability.Payload : event.availability) || {};
+  const channel = event.channel && 'Payload' in event.channel ? event.channel.Payload : event.channel;
+  
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
   
   try {
     // Use suggested time or first available slot
-    const meetingTime = event.availability.suggestedTime || 
-                       event.availability.slots[0]?.start ||
+    const meetingTime = availability.suggestedTime || 
+                       availability.slots?.[0]?.start ||
                        getDefaultMeetingTime();
     
     const startTime = new Date(meetingTime);
@@ -49,21 +79,21 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
     
     // Create meeting details
     const meetingDetails = {
-      summary: `Bug Triage: ${event.bugReport.bugId}`,
-      description: `Bug Triage Meeting\n\nBug ID: ${event.bugReport.bugId}\nSeverity: ${event.bugReport.severity || 'Medium'}\n\nDescription:\n${event.bugReport.description}`,
+      summary: `Bug Triage: ${bugReport.bugId}`,
+      description: `Bug Triage Meeting\n\nBug ID: ${bugReport.bugId}\nSeverity: ${bugReport.severity || 'Medium'}\n\nDescription:\n${bugReport.description}`,
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
-      attendees: event.engineers.map(e => e.userId)
+      attendees: engineers.map((e) => e.userId)
     };
     
     // Try to create calendar event for the bug reporter (meeting organizer)
     let calendarEvent;
     try {
-      if (event.bugReport.reportedBy) {
+      if (bugReport.reportedBy) {
         try {
           const attendeeEmails = meetingDetails.attendees.map((userId: string) => `${userId}@company.com`);
           calendarEvent = await googleCalendarService.createMeeting(
-            event.bugReport.reportedBy,
+            bugReport.reportedBy,
             attendeeEmails,
             meetingDetails.summary,
             meetingDetails.description,
@@ -84,12 +114,12 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       startTime: startTime.toISOString(),
       endTime: endTime.toISOString(),
       meetingLink: calendarEvent?.eventLink,
-      attendees: event.engineers.map(e => e.userId)
+      attendees: engineers.map((e) => e.userId)
     };
     
     // Post meeting details to Slack channel
-    if (event.channel?.channelId) {
-      await postMeetingToSlack(slack, event.channel.channelId, meetingResult, event.bugReport);
+    if (channel?.channelId) {
+      await postMeetingToSlack(slack, channel.channelId, meetingResult, bugReport);
     }
     
     return meetingResult;
@@ -102,7 +132,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       meetingId: `meeting-${Date.now()}`,
       startTime: fallbackTime,
       endTime: new Date(new Date(fallbackTime).getTime() + 30 * 60000).toISOString(),
-      attendees: event.engineers.map(e => e.userId)
+      attendees: engineers.map((e) => e.userId)
     };
   }
 };

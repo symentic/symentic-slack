@@ -3,12 +3,24 @@ import { WebClient } from '@slack/web-api';
 
 interface CreateChannelEvent {
   bugReport: {
+    Payload?: {
+      bugId: string;
+      description: string;
+      reportedBy: string;
+      severity?: string;
+    };
+  } | {
     bugId: string;
     description: string;
     reportedBy: string;
     severity?: string;
   };
-  engineers: Array<{
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
     userId: string;
     name: string;
   }>;
@@ -22,11 +34,15 @@ interface ChannelResult {
 export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event) => {
   console.log('Creating triage channel:', JSON.stringify(event, null, 2));
   
+  // Handle Step Functions nested payload structure
+  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+  const engineers = event.engineers && 'Payload' in event.engineers ? event.engineers.Payload : (event.engineers || []);
+  
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
   
   try {
     // Generate channel name
-    const channelName = generateChannelName(event.bugReport);
+    const channelName = generateChannelName(bugReport);
     
     // Create private channel
     const result = await slack.conversations.create({
@@ -42,8 +58,8 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
     
     // Invite relevant users
     const userIds = [
-      event.bugReport.reportedBy,
-      ...event.engineers.map(e => e.userId)
+      bugReport.reportedBy,
+      ...engineers.map((e) => e.userId)
     ];
     
     await slack.conversations.invite({
@@ -66,14 +82,14 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*Bug ID:* ${event.bugReport.bugId}\n*Severity:* ${event.bugReport.severity || 'Medium'}\n*Reporter:* <@${event.bugReport.reportedBy}>`
+            text: `*Bug ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}\n*Reporter:* <@${bugReport.reportedBy}>`
           }
         },
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*Description:*\n${event.bugReport.description}`
+            text: `*Description:*\n${bugReport.description}`
           }
         },
         {
@@ -83,7 +99,7 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*Assigned Engineers:*\n${event.engineers.map(e => `• <@${e.userId}>`).join('\n')}`
+            text: `*Assigned Engineers:*\n${engineers.map((e) => `• <@${e.userId}>`).join('\n')}`
           }
         }
       ]

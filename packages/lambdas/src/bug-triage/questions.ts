@@ -2,9 +2,15 @@ import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
 
 interface GenerateQuestionsEvent {
-  analysis: {
-    completenessScore: number;
-    missingInformation: string[];
+  analysis?: {
+    Payload?: {
+      completenessScore: number;
+      missingInformation: string[];
+      category?: string;
+    };
+    // Legacy fields for backward compatibility
+    completenessScore?: number;
+    missingInformation?: string[];
     category?: string;
   };
   bugReport: {
@@ -23,6 +29,9 @@ interface QuestionsResult {
 
 export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (event) => {
   console.log('Generating follow-up questions:', JSON.stringify(event, null, 2));
+  
+  // Handle Step Functions nested payload structure
+  const analysisData = event.analysis?.Payload || event.analysis || {};
   
   try {
     // Don't ask too many times
@@ -49,7 +58,7 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
     const limitedQuestions = result.questions.slice(0, 3);
     
     return {
-      questions: limitedQuestions.length > 0 ? limitedQuestions : getDefaultQuestions(event.analysis.missingInformation),
+      questions: limitedQuestions.length > 0 ? limitedQuestions : getDefaultQuestions(analysisData.missingInformation || []),
       priority: result.priority,
       reasoning: result.reasoning
     };
@@ -58,7 +67,7 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
     
     // Fallback questions
     return {
-      questions: getDefaultQuestions(event.analysis.missingInformation),
+      questions: getDefaultQuestions(analysisData.missingInformation || []),
       priority: 'medium',
       reasoning: 'Using default questions due to error'
     };

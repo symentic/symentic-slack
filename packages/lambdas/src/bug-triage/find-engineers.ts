@@ -9,7 +9,11 @@ interface FindEngineersEvent {
     category?: string;
     severity?: string;
   };
-  analysis: {
+  analysis?: {
+    Payload?: {
+      category?: string;
+    };
+    // Legacy field for backward compatibility
     category?: string;
   };
 }
@@ -26,7 +30,9 @@ export const handler: Handler<FindEngineersEvent, Engineer[]> = async (event) =>
   
   try {
     // Determine the bug category
-    const category = event.analysis.category || event.bugReport.category || 'general';
+    // Handle Step Functions nested payload structure
+    const analysisData = event.analysis?.Payload || event.analysis || {};
+    const category = analysisData.category || event.bugReport.category || 'general';
     
     // Query the area expertise table
     const params = {

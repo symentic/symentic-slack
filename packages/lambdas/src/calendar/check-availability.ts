@@ -3,11 +3,22 @@ import { Handler } from 'aws-lambda';
 // import { googleCalendarService } from '../../services/googleCalendar';
 
 interface CheckAvailabilityEvent {
-  engineers: Array<{
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
     userId: string;
     name: string;
   }>;
-  urgency: string;
+  urgency?: string;
+  bugReport?: {
+    Payload?: {
+      severity?: string;
+    };
+    severity?: string;
+  };
 }
 
 interface AvailabilityResult {
@@ -22,10 +33,14 @@ interface AvailabilityResult {
 export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = async (event) => {
   console.log('Checking calendar availability:', JSON.stringify(event, null, 2));
   
+  // Handle Step Functions nested payload structure
+  const engineersPayload = event.engineers as { Payload?: Array<{ userId: string; name: string }> } | undefined;
+  const engineers = engineersPayload?.Payload || event.engineers || [];
+  
   try {
     // Determine time window based on urgency
     // TODO: Use time window for actual availability checking
-    // const timeWindow = getTimeWindow(event.urgency);
+    // const timeWindow = getTimeWindow(urgency);
     
     // For now, we'll use simplified availability checking
     // In production, you'd need to map Slack user IDs to email addresses
@@ -39,7 +54,7 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     // );
     
     // Convert to our format
-    const engineerAvailability: EngineerAvailability[] = event.engineers.map((engineer) => {
+    const engineerAvailability: EngineerAvailability[] = (engineers as Array<{ userId: string; name: string }>).map((engineer) => {
       // TODO: Use busy slots from freeBusyData to calculate free slots
       // const emailKey = engineerEmails[index];
       // const busySlots = freeBusyData[emailKey as keyof typeof freeBusyData] || [];

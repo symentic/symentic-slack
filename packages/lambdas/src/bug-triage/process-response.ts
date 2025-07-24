@@ -33,7 +33,9 @@ interface ProcessedResponse {
 export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (event) => {
   console.log('Processing user response:', JSON.stringify(event, null, 2));
   
-  const responseText = event.response.text.toLowerCase().trim();
+  // Handle Step Functions nested payload structure
+  const responseData = event.response?.Payload || event.response;
+  const responseText = responseData.text.toLowerCase().trim();
   
   // Check for cancellation
   if (['cancel', 'stop', 'nevermind', 'nvm', 'quit'].includes(responseText)) {
@@ -46,9 +48,11 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
   
   try {
     // Use AI to extract structured information from the response
+    // Handle Step Functions nested payload structure
+    const analysisData = event.analysis?.Payload || event.analysis;
     const systemPrompt = `Extract structured bug report information from the user's response.
 Current bug context: ${JSON.stringify(event.bugReport)}
-Missing information: ${event.analysis.missingInformation.join(', ')}
+Missing information: ${analysisData.missingInformation.join(', ')}
 
 Extract any of these if mentioned:
 - Reproduction steps
@@ -59,7 +63,7 @@ Extract any of these if mentioned:
 
 Return JSON with extracted fields and confidence score (0-1).`;
 
-    const userPrompt = `User response: ${event.response.text}`;
+    const userPrompt = `User response: ${responseData.text}`;
     
     const result = await openAIService.classifyWithModel(
       systemPrompt,
@@ -80,7 +84,7 @@ Return JSON with extracted fields and confidence score (0-1).`;
     // Fallback: Try to extract basic info
     return {
       action: 'continue',
-      extractedInfo: extractBasicInfo(event.response.text),
+      extractedInfo: extractBasicInfo(responseData.text),
       confidence: 0.5
     };
   }
