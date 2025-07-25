@@ -30,6 +30,14 @@ interface UpdateBugEvent {
       };
     };
   };
+  // Analysis result from analyze lambda
+  analysis?: {
+    Payload?: {
+      isEmergency?: boolean;
+      completenessScore?: number;
+      severity?: string;
+    };
+  };
   // Legacy field for backward compatibility
   newInfo?: {
     reproductionSteps?: string;
@@ -46,12 +54,19 @@ export const handler: Handler<UpdateBugEvent, BugReportData> = async (event) => 
   // Handle Step Functions nested payload structure
   const bugReportData = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
   const newInfo = event.processedResponse?.Payload?.extractedInfo || event.newInfo || {};
+  const analysisResult = event.analysis?.Payload;
   
   // Merge new information into bug report, preserving existing data
   const updatedBugReport: BugReportData = {
     ...bugReportData,
     lastUpdated: new Date().toISOString()
   };
+  
+  // Update severity from analysis
+  if (analysisResult?.severity && analysisResult.severity !== bugReportData.severity) {
+    console.log(`Updating severity from ${bugReportData.severity} to ${analysisResult.severity}`);
+    updatedBugReport.severity = analysisResult.severity;
+  }
   
   // Only update fields if new information is provided
   if (newInfo.reproductionSteps) {

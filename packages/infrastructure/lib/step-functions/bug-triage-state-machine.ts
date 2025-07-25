@@ -92,6 +92,20 @@ export class BugTriageStateMachine extends Construct {
 
       updateBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'UpdateBugReport', {
         lambdaFunction: lambdaFunctions.bugUpdate,
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          processedResponse: stepfunctions.JsonPath.objectAt('$.processedResponse'),
+          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
+        }),
+        resultPath: '$.bugReport',
+      }),
+
+      updateSeverityIfEmergency: new stepfunctionsTasks.LambdaInvoke(this, 'UpdateSeverityIfEmergency', {
+        lambdaFunction: lambdaFunctions.bugUpdate,
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
+        }),
         resultPath: '$.bugReport',
       }),
 
@@ -234,7 +248,9 @@ export class BugTriageStateMachine extends Construct {
       .otherwise(tasks.saveBugReport);
 
     // Chain the tasks
-    tasks.analyzeBugReport.next(states.checkReportQuality);
+    tasks.analyzeBugReport
+      .next(tasks.updateSeverityIfEmergency)
+      .next(states.checkReportQuality);
     
     tasks.generateFollowUpQuestions
       .next(tasks.sendQuestionsToSlack)

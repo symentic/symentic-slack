@@ -11,6 +11,18 @@ The Symentic Slack Bot is a production-ready Node.js application that serves as 
 ### Hybrid Architecture (Step Functions + Lambda)
 As of the latest update, the bot uses a hybrid architecture combining AWS Step Functions for complex workflows with Lambda functions for individual tasks. This provides better state management, visual debugging, and scalability.
 
+### Separation of Concerns
+Each component should have a single, well-defined responsibility:
+- **Router Lambda**: Only routes messages to appropriate workflows based on intent. Should NOT perform analysis or extract detailed information.
+- **Intent Classifier**: Only classifies the intent type (bug.report, calendar.schedule, etc.). Should NOT determine severity or perform detailed analysis.
+- **Analyze Lambda**: Performs detailed analysis using AI (ChatGPT/GPT-4), including:
+  - Bug severity determination (critical/high/medium/low)
+  - Emergency detection
+  - Completeness scoring
+  - Quality assessment
+  - Missing information identification
+- **Individual Feature Lambdas**: Handle specific tasks within their domain
+
 ### Core Stack
 - **Runtime**: Node.js 20.x with TypeScript
 - **Framework**: Slack Bolt SDK for Slack app functionality
@@ -246,6 +258,29 @@ Required OAuth scopes:
 4. **Memory Management**: Be mindful of Lambda cold starts
 5. **Rate Limits**: Respect Slack API rate limits (1 msg/sec)
 6. **Testing**: Write unit tests for new agents and handlers
+
+## Architectural Principles
+
+### Single Responsibility Principle
+- Each Lambda function should do ONE thing well
+- Router Lambda: Route messages (don't analyze content)
+- Intent Classifier: Classify intent type (don't determine details)
+- Analyze Lambda: Perform AI analysis (determine severity, quality, etc.)
+- Process Lambda: Process user responses
+- Update Lambda: Update bug reports with new information
+
+### Data Flow
+1. **Router** → Receives message, classifies intent, starts workflow
+2. **Analyze** → Uses AI to analyze bug quality and determine severity
+3. **Questions** → Generates follow-up questions if needed
+4. **Process Response** → Extracts information from user responses
+5. **Update** → Merges new information and updates severity if needed
+6. **Save** → Persists final bug report to DynamoDB
+
+### Important: Don't Mix Concerns
+- The router should NOT determine severity - that's the analyze lambda's job
+- The intent classifier should NOT extract detailed entities - just classify the intent type
+- Each lambda should trust the output of previous lambdas in the workflow
 
 ## Migration Guide (Monolithic → Hybrid Architecture)
 

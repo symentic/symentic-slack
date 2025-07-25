@@ -82,10 +82,11 @@ app.message(async ({ message, say, client, body }) => {
     }
   }
   
-  if (!shouldProcessMessage(msg)) {
-    console.log('Message filtered out:', msg.text?.substring(0, 50));
-    return;
-  }
+  // Pre-filter disabled for demo - processing all messages through ChatGPT
+  // if (!shouldProcessMessage(msg)) {
+  //   console.log('Message filtered out:', msg.text?.substring(0, 50));
+  //   return;
+  // }
   
   try {
     // Classify intent
@@ -137,8 +138,20 @@ app.message(async ({ message, say, client, body }) => {
         text: '📅 I\'ll help you with calendar management. This feature is being migrated to our new architecture.',
         thread_ts: msg.thread_ts || msg.ts
       });
+    } else if (intent.intent.startsWith('task.') || intent.intent.startsWith('reminder.')) {
+      // Task and reminder intents
+      await say({
+        text: 'I can help with task management! This feature is being developed. For now, I can help you report bugs or schedule meetings.',
+        thread_ts: msg.thread_ts || msg.ts
+      });
+    } else if (intent.intent === 'query.search' || intent.intent === 'query.ask') {
+      // Search/query intents
+      await say({
+        text: 'I can help you find information! This feature is being developed. For now, try reporting a bug or scheduling a meeting.',
+        thread_ts: msg.thread_ts || msg.ts
+      });
     } else {
-      // Low confidence or no specific handler - don't respond
+      // No clear intent or low confidence - don't respond
       console.log(`Not responding - Intent: ${intent.intent}, Confidence: ${intent.confidence}`);
     }
   } catch (error) {
@@ -201,7 +214,7 @@ async function startBugTriageWorkflow(
           reportedBy: message.user,
           channel: message.channel,
           timestamp: new Date().toISOString(),
-          severity: intent.entities?.severity || 'medium'
+          severity: undefined // Let analyze lambda determine severity
         },
         context: {
           userId: message.user,

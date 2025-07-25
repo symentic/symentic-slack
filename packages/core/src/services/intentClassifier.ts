@@ -49,23 +49,23 @@ export class IntentClassifier {
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
     const { message, userId, channelId, recentContext, threadContext } = options;
     
-    // Quick filter for obvious non-software bug mentions
-    const insectPatterns = [
-      /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
-      /\b(spider|ant|fly|flies|mosquito|roach|cockroach|beetle)s?\b/i,
-      /\b(pest|infestation|exterminator)\b/i,
-      /\b(crawling|flying)\s+(bug|insect)s?\b/i
-    ];
-    
-    if (insectPatterns.some(pattern => pattern.test(message))) {
-      return {
-        intent: 'general.chatter',
-        confidence: 0.9,
-        entities: {},
-        modelUsed: 'pattern-match',
-        requiresFollowUp: []
-      };
-    }
+    // Quick filter disabled for demo - let ChatGPT handle all classification
+    // const insectPatterns = [
+    //   /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
+    //   /\b(spider|ant|fly|flies|mosquito|roach|cockroach|beetle)s?\b/i,
+    //   /\b(pest|infestation|exterminator)\b/i,
+    //   /\b(crawling|flying)\s+(bug|insect)s?\b/i
+    // ];
+    // 
+    // if (insectPatterns.some(pattern => pattern.test(message))) {
+    //   return {
+    //     intent: 'general.chatter',
+    //     confidence: 0.9,
+    //     entities: {},
+    //     modelUsed: 'pattern-match',
+    //     requiresFollowUp: []
+    //   };
+    // }
     
     const model = this.selectModel(message);
 
@@ -97,9 +97,19 @@ Context clues for software bugs:
 
 Special handling:
 - If in a thread with active bug triage, classify follow-ups as "bug.response"
+- Greetings (hi, hello, hey) should be "general.greeting"
+- Questions about capabilities should be "general.help"
 - Casual conversation or off-topic messages should be "general.chatter"
 - "Cancel" or "stop" should map to appropriate cancel intent
 - Physical bugs/insects should be "general.chatter"
+
+Intent classification rules:
+- Only classify as bug.report for clear software/technical issues
+- Only use general.greeting if the bot is specifically mentioned (e.g., "@symentic hi", "hello symentic")
+- Only use general.help when explicitly asking what the bot can do
+- For greetings without bot mention (just "hi", "hello"), use general.chatter
+- When unsure or message is ambiguous, use general.chatter
+- Set confidence < 0.5 for unclear intents
 
 Respond in JSON format only.`;
 

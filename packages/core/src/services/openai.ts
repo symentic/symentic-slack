@@ -44,10 +44,13 @@ export class OpenAIService {
       /\b(production|prod)\s+(down|outage|broken|failing)/i,
       /\b(all|entire|every)\s+(users?|customers?|team)\s+(affected|impacted|blocked)/i,
       /\b(data\s+loss|security\s+breach|payment\s+fail|revenue\s+impact)/i,
-      /\b(cannot|can't|unable\s+to)\s+(login|access|use|work)/i
+      /\b(cannot|can't|unable\s+to)\s+(login|access|use|work)/i,
+      /\b(platform|system|site|everything|whole\s+platform)\s+(breaking|broken|down|not\s+loading|crashing)/i,
+      /\b(not\s+loading|all\s+blank|nothing\s+works|completely\s+down)/i,
+      /\b(huge\s+error|major\s+outage|catastrophic|total\s+failure)/i
     ];
 
-    const fullText = `${bugInfo.description} ${bugInfo.impact || ''}`;
+    const fullText = `${bugInfo.description} ${bugInfo.impact || ''}`.toLowerCase();
     return emergencyPatterns.some(pattern => pattern.test(fullText));
   }
 
@@ -66,6 +69,8 @@ export class OpenAIService {
     followUpQuestions: string[];
     confidence: number; // 0-1
     category?: string; // UI, Performance, Security, etc.
+    severity?: 'critical' | 'high' | 'medium' | 'low';
+    isEmergency?: boolean;
   }> {
     const systemPrompt = `You are an expert bug triage specialist. Analyze the provided bug report and:
 1. Rate completeness from 0-100 (100 = has all necessary info to start fixing)
@@ -74,6 +79,8 @@ export class OpenAIService {
 4. Generate 2-3 contextual follow-up questions (not generic)
 5. Categorize the bug type if possible
 6. Rate your confidence in understanding the issue (0-1)
+7. Determine severity level based on impact and urgency
+8. Identify if this is an emergency requiring immediate attention
 
 Consider these factors:
 - Clear description of the problem
@@ -83,6 +90,14 @@ Consider these factors:
 - Error messages or logs
 - Expected vs actual behavior
 
+Severity guidelines:
+- "critical": Platform/system/site down or not loading, everything broken, whole platform issues, all users affected, production outage, data loss, security breach, revenue impact, customers cannot use the product
+- "high": Major feature broken, many users affected, significant business impact, core functionality failing
+- "medium": Feature partially working, some users affected, workaround available
+- "low": Minor issue, cosmetic bug, minimal impact
+
+IMPORTANT: If the user mentions "platform breaking", "not loading", "everything down", "whole platform", "all blank", or similar catastrophic failures, this is CRITICAL severity.
+
 IMPORTANT: Respond with valid JSON in this exact format:
 {
   "completenessScore": <number 0-100>,
@@ -90,7 +105,9 @@ IMPORTANT: Respond with valid JSON in this exact format:
   "missingInformation": ["item1", "item2"],
   "followUpQuestions": ["question1", "question2"],
   "confidence": <number 0-1>,
-  "category": "UI|Backend|Performance|Security|Other"
+  "category": "UI|Backend|Performance|Security|Other",
+  "severity": "critical|high|medium|low",
+  "isEmergency": <boolean>
 }`;
 
     const userPrompt = `Bug Report:
@@ -119,16 +136,37 @@ ${bugInfo.impact ? `Impact: ${bugInfo.impact}` : 'Impact: Not provided'}`;
         ? Math.min(1, Math.max(0, analysis.confidence))
         : 0;
       
+      // Force critical severity if emergency patterns are detected
+      let severity = analysis.severity || 'medium';
+      let isEmergency = analysis.isEmergency || false;
+      
+      if (this.isEmergencyBug(bugInfo)) {
+        severity = 'critical';
+        isEmergency = true;
+      }
+      
       return {
         completenessScore,
         qualityRating,
         missingInformation: Array.isArray(analysis.missingInformation) ? analysis.missingInformation : [],
         followUpQuestions: Array.isArray(analysis.followUpQuestions) ? analysis.followUpQuestions : [],
         confidence,
-        category: analysis.category || 'general'
+        category: analysis.category || 'general',
+        severity,
+        isEmergency
       };
     } catch (error) {
       console.error('Bug quality analysis failed:', error);
+      
+      // Check if this is an emergency bug even in fallback
+      let fallbackSeverity: 'critical' | 'high' | 'medium' | 'low' = 'medium';
+      let fallbackIsEmergency = false;
+      
+      if (this.isEmergencyBug(bugInfo)) {
+        fallbackSeverity = 'critical';
+        fallbackIsEmergency = true;
+      }
+      
       // Fallback response - but don't hardcode a low completeness score
       return {
         completenessScore: 0, // Let the caller calculate this
@@ -139,7 +177,9 @@ ${bugInfo.impact ? `Impact: ${bugInfo.impact}` : 'Impact: Not provided'}`;
           'What browser and operating system are you using?',
           'How often does this occur and how many users are affected?'
         ],
-        confidence: 0.3
+        confidence: 0.3,
+        severity: fallbackSeverity,
+        isEmergency: fallbackIsEmergency
       };
     }
   }

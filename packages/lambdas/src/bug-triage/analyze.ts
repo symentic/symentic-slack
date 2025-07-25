@@ -85,6 +85,7 @@ interface AnalysisResult {
   confidence: number;
   category?: string;
   isEmergency: boolean;
+  severity?: 'critical' | 'high' | 'medium' | 'low';
 }
 
 export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) => {
@@ -124,6 +125,25 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       console.log('AI analysis result:', JSON.stringify(aiAnalysis, null, 2));
     } catch (aiError) {
       console.error('AI analysis failed, using fallback:', aiError);
+      
+      // Determine severity based on keywords in description
+      const description = (bugReportData.description || '').toLowerCase();
+      let fallbackSeverity: 'critical' | 'high' | 'medium' | 'low' = 'medium';
+      let fallbackIsEmergency = false;
+      
+      // Check for critical keywords
+      const criticalPatterns = [
+        /\b(platform|system|site|everything|whole\s+platform)\s+(breaking|broken|down|not\s+loading)/i,
+        /\b(not\s+loading|all\s+blank|nothing\s+works|completely\s+down)/i,
+        /\b(huge\s+error|major\s+outage|emergency|critical)/i,
+        /\b(all\s+users?\s+affected|production\s+down)/i
+      ];
+      
+      if (criticalPatterns.some(pattern => pattern.test(description))) {
+        fallbackSeverity = 'critical';
+        fallbackIsEmergency = true;
+      }
+      
       // Fallback AI analysis
       aiAnalysis = {
         completenessScore: ruleBasedScore, // Use rule-based score
@@ -131,7 +151,9 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
         missingInformation: [],
         followUpQuestions: [],
         confidence: 0.5,
-        category: 'general'
+        category: 'general',
+        severity: fallbackSeverity,
+        isEmergency: fallbackIsEmergency
       };
     }
     
@@ -172,9 +194,6 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       }
     }
     
-    // Check if this is an emergency
-    const isEmergency = await checkIfEmergency(bugReportData);
-    
     // Hybrid approach: Use rule-based score for completeness, AI for quality insights
     const result: AnalysisResult = {
       completenessScore: ruleBasedScore, // Always use rule-based score
@@ -183,7 +202,8 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       followUpQuestions: followUpQuestions.length > 0 ? followUpQuestions : aiAnalysis.followUpQuestions,
       confidence: aiAnalysis.confidence || (ruleBasedScore / 100),
       category: aiAnalysis.category,
-      isEmergency
+      isEmergency: aiAnalysis.isEmergency || false,
+      severity: aiAnalysis.severity || 'medium'
     };
     
     console.log('Final analysis result:', JSON.stringify(result, null, 2));
@@ -194,21 +214,3 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
   }
 };
 
-async function checkIfEmergency(bugReport: { description?: string; impact?: string }): Promise<boolean> {
-  const emergencyKeywords = [
-    'production down',
-    'all users affected',
-    'critical',
-    'emergency',
-    'urgent',
-    'data loss',
-    'security breach',
-    'complete outage'
-  ];
-  
-  const description = (bugReport.description || '').toLowerCase();
-  const impact = (bugReport.impact || '').toLowerCase();
-  const fullText = `${description} ${impact}`;
-  
-  return emergencyKeywords.some(keyword => fullText.includes(keyword));
-}
