@@ -16,6 +16,7 @@ export interface LambdaFunctions {
   calendarCheckAvailability: lambda.Function;
   calendarScheduleMeeting: lambda.Function;
   slackNotify: lambda.Function;
+  profileSyncWorkspace: lambda.Function;
 }
 
 export interface DynamoDBTables {
@@ -28,6 +29,7 @@ export interface DynamoDBTables {
   areaExpertiseTable: dynamodb.Table;
   workflowsTable: dynamodb.Table;
   executionsTable: dynamodb.Table;
+  profileEngramsTable: dynamodb.Table;
 }
 
 export interface StageConfig {

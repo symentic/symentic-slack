@@ -30,11 +30,28 @@ interface Engineer {
 export const handler: Handler<FindEngineersEvent, Engineer[]> = async (event) => {
   console.log('Finding relevant engineers:', JSON.stringify(event, null, 2));
   
+  // Hardcoded founders for demo
+  const founders: Engineer[] = [
+    {
+      userId: 'U096M25U3U5', // Richard Huang
+      name: 'Richard Huang',
+      expertise: ['frontend', 'backend', 'infrastructure', 'product', 'general'],
+      relevanceScore: 95
+    },
+    {
+      userId: 'U097ANWL97A', // Leo Gao
+      name: 'Leo Gao',
+      expertise: ['ai', 'ml', 'backend', 'infrastructure', 'data', 'general'],
+      relevanceScore: 95
+    }
+  ];
+  
   try {
     // Determine the bug category
     // Handle Step Functions nested payload structure
     const analysisData = event.analysis?.Payload || event.analysis || {};
     const category = analysisData.category || event.bugReport.category || 'general';
+    const severity = event.bugReport.severity || 'medium';
     
     // Query the area expertise table
     const params = {
@@ -52,17 +69,39 @@ export const handler: Handler<FindEngineersEvent, Engineer[]> = async (event) =>
     const result = await dynamodb.send(command);
     
     if (!result.Items || result.Items.length === 0) {
-      console.log('No engineers found for category:', category);
-      return [];
+      console.log('No engineers found for category:', category, '- returning founders as default');
+      // For high/critical severity, boost founder scores
+      if (severity === 'high' || severity === 'critical') {
+        founders[0].relevanceScore = 100;
+        founders[1].relevanceScore = 100;
+      }
+      return founders;
     }
     
     // Map to Engineer format and calculate relevance
-    const engineers: Engineer[] = result.Items.map(item => ({
+    let engineers: Engineer[] = result.Items.map(item => ({
       userId: item.userId,
       name: item.displayName || 'Unknown',
       expertise: [item.area],
       relevanceScore: calculateRelevance(item, event.bugReport)
     }));
+    
+    // Filter out founders from regular engineers to avoid duplicates
+    engineers = engineers.filter(eng => 
+      eng.userId !== 'U096M25U3U5' && eng.userId !== 'U097ANWL97A'
+    );
+    
+    // For high/critical bugs, always include founders
+    if (severity === 'high' || severity === 'critical') {
+      // Boost founder scores for high priority
+      founders[0].relevanceScore = 100;
+      founders[1].relevanceScore = 100;
+      // Combine founders with other engineers
+      engineers = [...founders, ...engineers];
+    } else if (engineers.length === 0) {
+      // If no specific engineers found, return founders as fallback
+      return founders;
+    }
     
     // Sort by relevance and return top 3
     return engineers
@@ -71,7 +110,8 @@ export const handler: Handler<FindEngineersEvent, Engineer[]> = async (event) =>
       
   } catch (error) {
     console.error('Error finding engineers:', error);
-    return [];
+    // Return founders as fallback
+    return founders;
   }
 };
 

@@ -19,7 +19,8 @@
     "cdk:deploy": "npm run deploy -w @symentic/infrastructure",
     "cdk:deploy:prod": "npm run deploy:prod -w @symentic/infrastructure",
     "cdk:destroy": "npm run destroy -w @symentic/infrastructure",
-    "cdk:diff": "npm run diff -w @symentic/infrastructure"
+    "cdk:diff": "npm run diff -w @symentic/infrastructure",
+    "update-slack-manifest": "ts-node scripts/update-slack-manifest.ts"
   },
   "keywords": [
     "slack",

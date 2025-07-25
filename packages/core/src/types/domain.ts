@@ -59,14 +59,17 @@ export interface ConversationMessage {
 
 export interface BugReport {
   bugId: string;
+  bugNumber?: number; // Sequential bug number (1, 2, 3...)
+  workspaceId?: string; // Slack workspace ID for querying
   userId: string;
   channelId: string;
+  channelName?: string; // bug-1, bug-2, etc.
   threadTs: string;
   description: string;
   reproductionSteps: string;
   environment: string;
   impact: string;
-  severity: 'low' | 'medium' | 'high';
+  severity: 'low' | 'medium' | 'high' | 'critical';
   category?: string;
   completenessScore: number;
   qualityRating: number;
@@ -82,6 +85,11 @@ export interface BugReport {
     questions: string[];
     responses: string[];
   };
+  // Duplicate and similarity tracking
+  duplicateOf?: string; // Bug ID of the original if this is a duplicate
+  relatedBugs?: string[]; // Array of related bug IDs
+  similarityScore?: number; // Similarity to the matched bug (0-1)
+  descriptionHash?: string; // Hash of description for exact match detection
 }
 
 export interface Engineer {

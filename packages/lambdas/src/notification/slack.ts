@@ -137,21 +137,56 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
   // Handle Step Functions nested payload structure
   const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
   
+  // Check if this is a duplicate bug
+  const isDuplicate = bugReport.duplicateOf || bugReport.isDuplicate;
+  const bugNumber = bugReport.bugNumber ? `#${bugReport.bugNumber}` : '';
+  
   const blocks: Array<{
     type: string;
     text?: {
       type: string;
       text: string;
     };
-  }> = [
-    {
+  }> = [];
+  
+  if (isDuplicate) {
+    blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `✅ *Bug Report Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}`
+        text: `⚠️ *Duplicate Bug Detected!*\n\nThis appears to be a duplicate of an existing bug. Your report has been added to the existing bug channel.`
       }
+    });
+    
+    if (bugReport.triageChannel) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Bug ${bugNumber}:* <#${bugReport.triageChannel}>\n*Original Bug:* ${bugReport.duplicateOf}\n*Severity:* ${bugReport.severity || 'Medium'}`
+        }
+      });
     }
-  ];
+  } else {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `✅ *Bug Report ${bugNumber} Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}`
+      }
+    });
+    
+    // Show similar bugs if any
+    if (bugReport.relatedBugs && bugReport.relatedBugs.length > 0) {
+      blocks.push({
+        type: 'context',
+        elements: [{
+          type: 'mrkdwn',
+          text: `ℹ️ Found ${bugReport.relatedBugs.length} similar bug(s) that might be related`
+        }]
+      });
+    }
+  }
   
   // Handle Step Functions nested payload structure for engineers
   if (event.engineers) {

@@ -52,10 +52,11 @@ export class LambdaFunctionsConstruct extends Construct {
       { name: 'calendarCheckAvailability', entry: 'src/calendar/check-availability.ts', handler: 'handler' },
       { name: 'calendarScheduleMeeting', entry: 'src/calendar/schedule-meeting.ts', handler: 'handler' },
       { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler' },
+      { name: 'profileSyncWorkspace', entry: 'src/profile-engram/sync-workspace.ts', handler: 'handler', memory: 512 },
     ];
 
     // Create Lambda functions
-    const functions: any = {};
+    const functions: Record<string, lambda.Function> = {};
     functionDefinitions.forEach(def => {
       const functionProps: lambdaNodejs.NodejsFunctionProps = {
         functionName: `semantic-slack-bot-${stage}-${def.name}`,
@@ -92,7 +93,7 @@ export class LambdaFunctionsConstruct extends Construct {
       })
     );
 
-    this.functions = functions as LambdaFunctions;
+    this.functions = functions as unknown as LambdaFunctions;
   }
 
   private createLambdaRole(tables: DynamoDBTables, bugResponseQueue: sqs.Queue): iam.Role {
@@ -124,6 +125,12 @@ export class LambdaFunctionsConstruct extends Construct {
       resources: ['*'],
     }));
 
+    // Add Lambda invoke permissions for profile sync
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: ['*'], // You could restrict this to specific functions if needed
+    }));
+
     return role;
   }
 
@@ -152,6 +159,7 @@ export class LambdaFunctionsConstruct extends Construct {
       AREA_EXPERTISE_TABLE: tables.areaExpertiseTable.tableName,
       WORKFLOWS_TABLE: tables.workflowsTable.tableName,
       EXECUTIONS_TABLE: tables.executionsTable.tableName,
+      PROFILE_ENGRAMS_TABLE: tables.profileEngramsTable.tableName,
       BUG_RESPONSE_QUEUE_URL: bugResponseQueue.queueUrl,
     };
 

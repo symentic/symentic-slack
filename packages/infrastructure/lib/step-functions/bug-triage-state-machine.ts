@@ -116,6 +116,11 @@ export class BugTriageStateMachine extends Construct {
 
       createTriageChannel: new stepfunctionsTasks.LambdaInvoke(this, 'CreateTriageChannel', {
         lambdaFunction: lambdaFunctions.bugCreateChannel,
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          engineers: stepfunctions.JsonPath.objectAt('$.engineers'),
+          workspaceId: stepfunctions.JsonPath.stringAt('$.context.teamId')
+        }),
         resultPath: '$.channel',
       }),
 

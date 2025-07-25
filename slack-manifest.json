@@ -1,0 +1,161 @@
+{
+  "display_information": {
+    "name": "Symentic",
+    "description": "Symentic is your autonomous AI infrastructure — deploy agents that observe, act, and evolve across Slack, Discord, APIs, and beyond.",
+    "background_color": "#3d3c3d",
+    "long_description": "Symentic is an intelligent platform that deploys AI agents to automate workflows, manage bugs, schedule meetings, maintain team profiles, and integrate with your entire tech stack. Our agents observe conversations, take actions, and continuously learn to better serve your team."
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": false,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": false
+    },
+    "bot_user": {
+      "display_name": "Symentic",
+      "always_online": true
+    },
+    "shortcuts": [
+      {
+        "name": "Report a Bug",
+        "type": "global",
+        "callback_id": "report_bug",
+        "description": "Quickly report a bug"
+      }
+    ],
+    "slash_commands": [
+      {
+        "command": "/refresh-profile",
+        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Refresh your profile engram",
+        "usage_hint": "[no parameters needed]",
+        "should_escape": false
+      },
+      {
+        "command": "/sync-workspace",
+        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Sync all workspace profiles (admin only)",
+        "usage_hint": "[--force to bypass rate limit]",
+        "should_escape": false
+      },
+      {
+        "command": "/link-bugs",
+        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Link two related bugs together",
+        "usage_hint": "[bug-number-1] [bug-number-2]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/oauth_redirect"
+    ],
+    "scopes": {
+      "bot": [
+        "channels:history",
+        "channels:join",
+        "channels:manage",
+        "channels:read",
+        "commands",
+        "emoji:read",
+        "files:read",
+        "files:write",
+        "groups:history",
+        "groups:read",
+        "groups:write",
+        "im:history",
+        "im:read",
+        "im:write",
+        "links:read",
+        "links:write",
+        "mpim:history",
+        "mpim:read",
+        "mpim:write",
+        "pins:read",
+        "pins:write",
+        "reactions:read",
+        "reactions:write",
+        "reminders:read",
+        "reminders:write",
+        "team:read",
+        "users.profile:read",
+        "users:read",
+        "users:read.email",
+        "users:write",
+        "usergroups:read",
+        "usergroups:write",
+        "workflow.steps:execute",
+        "app_mentions:read",
+        "chat:write",
+        "chat:write.customize",
+        "chat:write.public",
+        "dnd:read",
+        "remote_files:read",
+        "remote_files:share",
+        "remote_files:write"
+      ],
+      "user": [
+        "channels:read",
+        "files:read",
+        "groups:read",
+        "im:read",
+        "mpim:read",
+        "reactions:read",
+        "team:read",
+        "users:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+      "bot_events": [
+        "app_home_opened",
+        "app_mention",
+        "channel_archive",
+        "channel_created",
+        "channel_deleted",
+        "channel_history_changed",
+        "channel_left",
+        "channel_rename",
+        "channel_unarchive",
+        "email_domain_changed",
+        "file_created",
+        "file_deleted",
+        "file_public",
+        "file_shared",
+        "group_archive",
+        "group_history_changed",
+        "group_left",
+        "group_rename",
+        "group_unarchive",
+        "im_history_changed",
+        "link_shared",
+        "member_joined_channel",
+        "member_left_channel",
+        "message.channels",
+        "message.groups",
+        "message.im",
+        "message.mpim",
+        "pin_added",
+        "pin_removed",
+        "reaction_added",
+        "reaction_removed",
+        "subteam_created",
+        "subteam_members_changed",
+        "subteam_updated",
+        "team_join",
+        "team_rename",
+        "user_change"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

@@ -1,11 +1,14 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { App, AwsLambdaReceiver } from '@slack/bolt';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
+import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { intentClassifier } from '@symentic/core';
 import { SlackMessage } from '@symentic/core';
 import { handleThreadResponse, storeWorkflowReference } from './thread-response-handler';
 import { executionTracker } from '@symentic/core';
 import { redisService } from '@symentic/core';
+import { profileEngramService } from '@symentic/core';
+import { ProfileInteraction, SlackUserData } from '@symentic/core';
 
 // Initialize Step Functions client with explicit configuration
 const stepFunctions = new SFNClient({
@@ -32,6 +35,209 @@ const app = new App({
   processBeforeResponse: true, // Process events before responding
 });
 
+// Handle app installation event
+app.event('app_installed', async ({ event, client }) => {
+  console.log('App installed event received:', event);
+  
+  try {
+    const businessId = (event as any).team_id;
+    
+    // Invoke the sync Lambda directly
+    const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    const invokeCommand = new InvokeCommand({
+      FunctionName: `semantic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
+      InvocationType: 'Event', // Async invocation
+      Payload: JSON.stringify({
+        businessId,
+        triggerType: 'app_installed'
+      })
+    });
+    
+    try {
+      await lambdaClient.send(invokeCommand);
+      console.log('Profile sync Lambda invoked for business:', businessId);
+    } catch (invokeError) {
+      console.error('Failed to invoke sync Lambda:', invokeError);
+    }
+    
+    // Send welcome message
+    const channels = await client.conversations.list({
+      types: 'public_channel',
+      limit: 1
+    });
+    
+    if (channels.channels && channels.channels.length > 0) {
+      await client.chat.postMessage({
+        channel: channels.channels[0].id!,
+        text: "👋 Hello! I'm Symentic, your AI-powered workspace assistant. I'm now syncing team profiles to better assist you. This may take a few minutes."
+      });
+    }
+  } catch (error) {
+    console.error('Error handling app installation:', error);
+  }
+});
+
+// Handle team join events (new users)
+app.event('team_join', async ({ event }) => {
+  console.log('New user joined:', (event as any).user);
+  
+  try {
+    const userEvent = event as any;
+    const businessId = userEvent.user?.team_id || userEvent.team || '';
+    if (!businessId) {
+      console.error('No team ID found in team_join event');
+      return;
+    }
+    
+    // Create profile for new user
+    const slackUser = userEvent.user as SlackUserData;
+    await profileEngramService.createProfile({
+      businessId,
+      userId: slackUser.id,
+      userType: 'internal',
+      name: slackUser.real_name || slackUser.name || 'New User',
+      email: slackUser.profile?.email,
+      source: 'slack',
+      role: slackUser.profile?.title || 'Team Member',
+      slackData: slackUser,
+      consent: {
+        given: true,
+        method: 'terms_acceptance',
+        timestamp: new Date().toISOString()
+      }
+    });
+    
+    console.log(`Profile created for new user: ${slackUser.id}`);
+  } catch (error) {
+    console.error('Error creating profile for new user:', error);
+  }
+});
+
+// Handle user profile changes
+app.event('user_change', async ({ event }) => {
+  const userEvent = event as any;
+  console.log('User profile changed:', userEvent.user?.id);
+  
+  try {
+    const slackUser = userEvent.user as SlackUserData;
+    const businessId = userEvent.user?.team_id || userEvent.team || '';
+    
+    if (!businessId) {
+      console.error('No team ID found in user_change event');
+      return;
+    }
+    
+    // Update existing profile
+    const existingProfile = await profileEngramService.getProfile(businessId, slackUser.id);
+    
+    if (existingProfile) {
+      await profileEngramService.updateProfile({
+        businessId,
+        userId: slackUser.id,
+        updates: {
+          name: slackUser.real_name || slackUser.name || existingProfile.name,
+          email: slackUser.profile?.email || existingProfile.email,
+          role: slackUser.profile?.title || existingProfile.role,
+          slackProfile: {
+            slackUserId: slackUser.id,
+            realName: slackUser.real_name || slackUser.name,
+            displayName: slackUser.profile?.display_name || slackUser.name,
+            title: slackUser.profile?.title,
+            profilePictureUrl: slackUser.profile?.image_512 || slackUser.profile?.image_192,
+            timezone: slackUser.tz,
+            statusText: slackUser.profile?.status_text,
+            isOwner: slackUser.is_owner || false,
+            isAdmin: slackUser.is_admin || false
+          }
+        }
+      });
+      
+      console.log(`Profile updated for user: ${slackUser.id}`);
+    }
+  } catch (error) {
+    console.error('Error updating user profile:', error);
+  }
+});
+
+// Patterns to detect external users
+const EXTERNAL_PATTERNS = {
+  email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+  userMention: /<@([A-Z0-9]+)>/g,
+  customer: /\b(customer|client|user|buyer|vendor|partner|supplier)\b/i
+};
+
+// Extract external users from message text
+async function extractExternalUsers(text: string): Promise<Array<{ email?: string; id?: string; name?: string }>> {
+  const externalUsers: Array<{ email?: string; id?: string; name?: string }> = [];
+  
+  // Extract emails
+  const emails = text.match(EXTERNAL_PATTERNS.email) || [];
+  emails.forEach(email => {
+    // Skip common internal domains (customize this for each business)
+    if (!email.includes('@slack.com') && !email.includes('@anthropic.com')) {
+      externalUsers.push({ email, name: email.split('@')[0] });
+    }
+  });
+  
+  // Look for customer mentions
+  if (EXTERNAL_PATTERNS.customer.test(text)) {
+    // Extract context around customer mention for name
+    const customerMatch = text.match(/(?:customer|client|user)\s+([A-Za-z]+)/i);
+    if (customerMatch && customerMatch[1]) {
+      externalUsers.push({ name: customerMatch[1], id: `external_${customerMatch[1].toLowerCase()}` });
+    }
+  }
+  
+  return externalUsers;
+}
+
+// Capture interaction for profile engram
+async function captureInteractionForEngram(
+  message: SlackMessage,
+  intent: { intent: string; confidence: number; entities?: Record<string, unknown> },
+  businessId: string
+) {
+  // Skip bot messages
+  if (message.bot_id) return;
+  
+  const interaction: ProfileInteraction = {
+    businessId,
+    userId: message.user!,
+    timestamp: new Date().toISOString(),
+    type: 'message',
+    channel: message.channel,
+    details: {
+      intent: intent.intent,
+      confidence: intent.confidence,
+      entities: intent.entities,
+      message: message.text?.substring(0, 100) // First 100 chars for privacy
+    }
+  };
+  
+  try {
+    // Update internal user profile
+    await profileEngramService.recordInteraction(interaction);
+    
+    // Check for external user mentions or interactions
+    const externalUsers = await extractExternalUsers(message.text || '');
+    for (const external of externalUsers) {
+      await profileEngramService.createOrUpdateExternalProfile(
+        businessId,
+        external.email || external.id || '',
+        {
+          name: external.name,
+          email: external.email,
+          firstContactChannel: message.channel,
+          interactedWith: message.user
+        }
+      );
+    }
+  } catch (error) {
+    console.error('Error capturing interaction for engram:', error);
+    // Don't fail the main process if engram capture fails
+  }
+}
+
 // Simple message filter
 function shouldProcessMessage(message: SlackMessage): boolean {
   // Skip bot messages
@@ -49,6 +255,253 @@ function shouldProcessMessage(message: SlackMessage): boolean {
   const triggers = ['bug', 'issue', 'error', 'problem', 'schedule', 'meeting', 'help'];
   return triggers.some(trigger => text.includes(trigger));
 }
+
+// Handle slash commands
+app.command('/refresh-profile', async ({ command, ack, say, client }) => {
+  // Acknowledge command request
+  await ack();
+  
+  const userId = command.user_id;
+  const businessId = command.team_id;
+  
+  console.log(`Profile refresh requested by ${userId} in business ${businessId}`);
+  
+  try {
+    // Check rate limit
+    const rateLimitKey = `profile_refresh:${businessId}:${userId}`;
+    const lastRefresh = await redisService.getShortTermMemory(rateLimitKey);
+    
+    if (lastRefresh) {
+      const lastRefreshTime = parseInt(lastRefresh as string);
+      const timeSinceRefresh = Date.now() - lastRefreshTime;
+      const hoursRemaining = Math.ceil((24 * 60 * 60 * 1000 - timeSinceRefresh) / (60 * 60 * 1000));
+      
+      await say({
+        text: `⏳ Your profile was recently refreshed. Please wait ${hoursRemaining} hours before refreshing again.`,
+        thread_ts: command.ts
+      });
+      return;
+    }
+    
+    // Set rate limit (24 hours)
+    await redisService.setShortTermMemory(rateLimitKey, Date.now().toString(), 24 * 60 * 60);
+    
+    // Get user's Slack profile
+    const userInfo = await client.users.info({ user: userId });
+    
+    if (!userInfo.user) {
+      await say('❌ Unable to fetch your profile information.');
+      return;
+    }
+    
+    const slackUser = userInfo.user as SlackUserData;
+    
+    // Update profile
+    const existingProfile = await profileEngramService.getProfile(businessId, userId);
+    
+    if (existingProfile) {
+      // Update existing profile
+      await profileEngramService.updateProfile({
+        businessId,
+        userId,
+        updates: {
+          name: slackUser.real_name || slackUser.name || existingProfile.name,
+          email: slackUser.profile?.email || existingProfile.email,
+          role: slackUser.profile?.title || existingProfile.role,
+          slackProfile: {
+            slackUserId: slackUser.id,
+            realName: slackUser.real_name || slackUser.name,
+            displayName: slackUser.profile?.display_name || slackUser.name,
+            title: slackUser.profile?.title,
+            profilePictureUrl: slackUser.profile?.image_512 || slackUser.profile?.image_192,
+            timezone: slackUser.tz,
+            statusText: slackUser.profile?.status_text,
+            isOwner: slackUser.is_owner || false,
+            isAdmin: slackUser.is_admin || false
+          },
+          lastUpdated: new Date().toISOString()
+        }
+      });
+      
+      await say('✅ Your profile has been successfully refreshed!');
+    } else {
+      // Create new profile
+      await profileEngramService.createProfile({
+        businessId,
+        userId,
+        userType: 'internal',
+        name: slackUser.real_name || slackUser.name || 'Unknown User',
+        email: slackUser.profile?.email,
+        source: 'slack',
+        role: slackUser.profile?.title || 'Team Member',
+        slackData: slackUser,
+        consent: {
+          given: true,
+          method: 'explicit',
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      await say('✅ Your profile has been created successfully!');
+    }
+    
+    // Add enrichment about the refresh
+    await profileEngramService.addEnrichment(businessId, userId, {
+      title: 'Profile Manually Refreshed',
+      content: 'User requested a manual profile refresh via /refresh-profile command',
+      source: 'manual'
+    });
+    
+  } catch (error) {
+    console.error('Error refreshing profile:', error);
+    await say('❌ An error occurred while refreshing your profile. Please try again later.');
+  }
+});
+
+// Handle /sync-workspace command (admin only)
+app.command('/sync-workspace', async ({ command, ack, say, client }) => {
+  await ack();
+  
+  const userId = command.user_id;
+  const businessId = command.team_id;
+  
+  try {
+    // Check if user is admin
+    const userInfo = await client.users.info({ user: userId });
+    const isAdmin = (userInfo.user as SlackUserData)?.is_admin;
+    
+    if (!isAdmin) {
+      await say({
+        text: '❌ This command is only available to workspace administrators.',
+        thread_ts: command.ts
+      });
+      return;
+    }
+    
+    // Check rate limit for workspace sync (once per day)
+    const rateLimitKey = `workspace_sync:${businessId}`;
+    const lastSync = await redisService.getShortTermMemory(rateLimitKey);
+    
+    // Temporary bypass for testing - remove this after testing
+    const bypassRateLimit = command.text && command.text.includes('--force');
+    
+    if (lastSync && !bypassRateLimit) {
+      const lastSyncTime = parseInt(lastSync as string);
+      const timeSinceSync = Date.now() - lastSyncTime;
+      const hoursRemaining = Math.ceil((24 * 60 * 60 * 1000 - timeSinceSync) / (60 * 60 * 1000));
+      
+      await say({
+        text: `⏳ Workspace was recently synced. Please wait ${hoursRemaining} hours before syncing again.`,
+        thread_ts: command.ts
+      });
+      return;
+    }
+    
+    // Set rate limit
+    await redisService.setShortTermMemory(rateLimitKey, Date.now().toString(), 24 * 60 * 60);
+    
+    await say({
+      text: '🔄 Starting workspace profile sync. This may take a few minutes for large workspaces...',
+      thread_ts: command.ts
+    });
+    
+    // Invoke the sync Lambda directly
+    const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
+    const invokeCommand = new InvokeCommand({
+      FunctionName: `semantic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
+      InvocationType: 'Event', // Async invocation
+      Payload: JSON.stringify({
+        businessId,
+        triggerType: 'manual_sync'
+      })
+    });
+    
+    try {
+      await lambdaClient.send(invokeCommand);
+      console.log('Profile sync Lambda invoked for business:', businessId);
+      
+      // Check status after a delay
+      setTimeout(async () => {
+        await say({
+          text: '✅ Workspace profile sync has been initiated. You will be notified when complete.',
+          thread_ts: command.ts
+        });
+      }, 2000);
+    } catch (invokeError) {
+      console.error('Failed to invoke sync Lambda:', invokeError);
+      await say({
+        text: '❌ Failed to start workspace sync. Please try again later.',
+        thread_ts: command.ts
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error syncing workspace:', error);
+    await say('❌ An error occurred while syncing the workspace. Please try again later.');
+  }
+});
+
+// Handle /link-bugs command
+app.command('/link-bugs', async ({ command, ack, say }) => {
+  await ack();
+  
+  try {
+    const userId = command.user_id;
+    const args = command.text.trim().split(/\s+/);
+    
+    if (args.length < 2) {
+      await say({
+        text: '❌ Please provide two bug numbers to link. Usage: `/link-bugs 123 456`'
+      });
+      return;
+    }
+    
+    const bug1 = args[0];
+    const bug2 = args[1];
+    
+    // Validate bug numbers
+    if (!/^\d+$/.test(bug1) || !/^\d+$/.test(bug2)) {
+      await say({
+        text: '❌ Invalid bug numbers. Please use numeric bug IDs like: `/link-bugs 123 456`'
+      });
+      return;
+    }
+    
+    // Import bugSimilarityService
+    const { bugSimilarityService } = await import('@symentic/core');
+    
+    // Link the bugs
+    await bugSimilarityService.linkBugs(`bug-${bug1}`, `bug-${bug2}`);
+    
+    await say({
+      text: `✅ Successfully linked bug #${bug1} and bug #${bug2}`,
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `✅ *Bugs Linked Successfully*\n\nBug #${bug1} and Bug #${bug2} are now marked as related.`
+          }
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: `Linked by <@${userId}> • <!date^${Math.floor(Date.now() / 1000)}^{date_short_pretty} at {time}|${new Date().toISOString()}>`
+            }
+          ]
+        }
+      ]
+    });
+    
+  } catch (error) {
+    console.error('Error linking bugs:', error);
+    await say({
+      text: '❌ Failed to link bugs. Please make sure both bug numbers exist and try again.'
+    });
+  }
+});
 
 // Handle all messages
 app.message(async ({ message, say, client, body }) => {
@@ -98,6 +551,14 @@ app.message(async ({ message, say, client, body }) => {
     });
     
     console.log(`Intent classified: ${intent.intent} (${intent.confidence})`);
+    
+    // Capture interaction for profile engram (non-blocking)
+    const businessId = msg.team || '';
+    if (businessId) {
+      captureInteractionForEngram(msg, intent, businessId).catch(err => 
+        console.error('Profile engram capture error:', err)
+      );
+    }
     
     // Route based on intent
     console.log('Checking bug condition:', {

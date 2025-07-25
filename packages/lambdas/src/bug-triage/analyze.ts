@@ -1,5 +1,6 @@
 import { Handler } from 'aws-lambda';
-import { openAIService } from '@symentic/core';
+import { openAIService, bugSimilarityService, bugCounterService } from '@symentic/core';
+import crypto from 'crypto';
 
 interface BugReportData {
   description: string;
@@ -13,6 +14,7 @@ interface BugReportData {
   errorMessages?: string;
   frequency?: string;
   completenessScore?: number;
+  bugId?: string;
 }
 
 // Rule-based completeness calculation
@@ -86,6 +88,19 @@ interface AnalysisResult {
   category?: string;
   isEmergency: boolean;
   severity?: 'critical' | 'high' | 'medium' | 'low';
+  // Duplicate detection results
+  isDuplicate?: boolean;
+  duplicateOf?: string;
+  duplicateChannelId?: string;
+  duplicateChannelName?: string;
+  similarBugs?: Array<{
+    bugId: string;
+    bugNumber: number;
+    similarity: number;
+    description: string;
+  }>;
+  bugNumber?: number;
+  descriptionHash?: string;
 }
 
 export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) => {
@@ -106,6 +121,47 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
         isEmergency: false
       };
     }
+    
+    // Check for duplicate bugs first
+    const workspaceId = event.context.teamId;
+    console.log('Checking for similar bugs in workspace:', workspaceId);
+    
+    const similarBugs = await bugSimilarityService.findSimilarBugs(
+      workspaceId,
+      bugReportData.description,
+      undefined // category will be determined later
+    );
+    
+    // Generate description hash for exact matching
+    const descriptionHash = crypto.createHash('md5')
+      .update(bugReportData.description.toLowerCase().trim().replace(/\s+/g, ' '))
+      .digest('hex');
+    
+    // Get next bug number (will be used whether duplicate or not)
+    const bugNumber = await bugCounterService.getNextBugNumber(workspaceId);
+    
+    // Check if this is a duplicate (>95% similarity)
+    const isDuplicate = similarBugs.length > 0 && similarBugs[0].similarity > 0.95;
+    const duplicateInfo = isDuplicate ? {
+      isDuplicate: true,
+      duplicateOf: similarBugs[0].bugId,
+      duplicateChannelId: similarBugs[0].channelId,
+      duplicateChannelName: similarBugs[0].channelName,
+      similarBugs: similarBugs.map(bug => ({
+        bugId: bug.bugId,
+        bugNumber: bug.bugNumber,
+        similarity: bug.similarity,
+        description: bug.description
+      }))
+    } : {
+      isDuplicate: false,
+      similarBugs: similarBugs.length > 0 ? similarBugs.slice(0, 3).map(bug => ({
+        bugId: bug.bugId,
+        bugNumber: bug.bugNumber,
+        similarity: bug.similarity,
+        description: bug.description
+      })) : []
+    };
     
     // Calculate rule-based completeness score (more reliable)
     const ruleBasedScore = calculateRuleBasedCompleteness(bugReportData);
@@ -203,7 +259,10 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       confidence: aiAnalysis.confidence || (ruleBasedScore / 100),
       category: aiAnalysis.category,
       isEmergency: aiAnalysis.isEmergency || false,
-      severity: aiAnalysis.severity || 'medium'
+      severity: aiAnalysis.severity || 'medium',
+      bugNumber,
+      descriptionHash,
+      ...duplicateInfo
     };
     
     console.log('Final analysis result:', JSON.stringify(result, null, 2));

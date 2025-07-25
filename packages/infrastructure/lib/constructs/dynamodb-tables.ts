@@ -25,6 +25,7 @@ export class DynamoDBTablesConstruct extends Construct {
       areaExpertiseTable: this.createAreaExpertiseTable(stage),
       workflowsTable: this.createWorkflowsTable(stage),
       executionsTable: this.createExecutionsTable(stage),
+      profileEngramsTable: this.createProfileEngramsTable(stage),
     };
   }
 
@@ -149,6 +150,35 @@ export class DynamoDBTablesConstruct extends Construct {
       indexName: 'userId-status-index',
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'status', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    return table;
+  }
+
+  private createProfileEngramsTable(stage: string): dynamodb.Table {
+    const table = new dynamodb.Table(this, 'ProfileEngramsTable', {
+      tableName: `SemanticProfileEngrams-${stage}`,
+      partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING }, // BUSINESS#businessId
+      sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING }, // USER#userId or INTERACTION#timestamp#userId
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecovery: true,
+    });
+
+    // GSI1: For querying by user type within a business
+    table.addGlobalSecondaryIndex({
+      indexName: 'GSI1',
+      partitionKey: { name: 'GSI1PK', type: dynamodb.AttributeType.STRING }, // BUSINESS#businessId
+      sortKey: { name: 'GSI1SK', type: dynamodb.AttributeType.STRING }, // TYPE#userType#USER#userId
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    // GSI2: For querying by tags within a business
+    table.addGlobalSecondaryIndex({
+      indexName: 'GSI2',
+      partitionKey: { name: 'businessId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'lastInteraction', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
 

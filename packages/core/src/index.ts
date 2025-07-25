@@ -1,6 +1,7 @@
 // Types
 export * from './types/domain';
 export * from './types/slack';
+export * from './types/profile-engram';
 
 // Services
 export { dynamoDBService } from './services/dynamodb';
@@ -12,6 +13,9 @@ export { redisService } from './services/redis';
 export { initializeServices } from './services/serviceInitializer';
 export { slackService } from './services/slack';
 export { createAgentRegistry } from './services/agentRegistry';
+export { profileEngramService } from './services/profileEngramService';
+export { bugCounterService } from './services/bugCounterService';
+export { bugSimilarityService } from './services/bugSimilarityService';
 
 // Agents
 export { BaseAgent } from './agents/base/BaseAgent';
@@ -31,3 +35,13 @@ export type {
   ExecutionData,
   ConversationMessage
 } from './types/domain';
+
+export type {
+  EngramProfile,
+  Enrichment,
+  ProfileInteraction,
+  ProfileSearchFilters,
+  CreateProfileRequest,
+  ProfileUpdateRequest,
+  SlackUserData
+} from './types/profile-engram';
