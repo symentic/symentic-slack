@@ -69,6 +69,8 @@ export interface BugReport {
   reproductionSteps: string;
   environment: string;
   impact: string;
+  errorMessages?: string;
+  frequency?: string;
   severity: 'low' | 'medium' | 'high' | 'critical';
   category?: string;
   completenessScore: number;

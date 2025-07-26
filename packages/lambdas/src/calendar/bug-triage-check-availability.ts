@@ -27,6 +27,8 @@ interface AvailabilityResult {
     availableEngineers: string[];
   }>;
   suggestedTime?: string;
+  engineersWithoutCalendar?: string[];
+  calendarAuthUrl?: string;
 }
 
 export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = async (event) => {
@@ -69,9 +71,18 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     console.log('Engineers with calendar:', engineersWithCalendar);
     console.log('Engineers without calendar:', engineersWithoutCalendar);
     
-    // If no engineers have calendar connected, return default slots
+    // If no engineers have calendar connected, return default slots with auth URL
     if (engineersWithCalendar.length === 0) {
-      return getDefaultSlots(engineerUserIds, urgency);
+      const result = getDefaultSlots(engineerUserIds, urgency);
+      
+      // Generate auth URL for calendar connection
+      const authUrl = await googleCalendarService.getAuthUrl(engineerUserIds[0]);
+      
+      return {
+        ...result,
+        engineersWithoutCalendar: engineersWithoutCalendar,
+        calendarAuthUrl: authUrl
+      };
     }
     
     // Get free/busy time for engineers with calendar
@@ -111,7 +122,8 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     
     return {
       slots: topSlots,
-      suggestedTime: topSlots[0]?.start
+      suggestedTime: topSlots[0]?.start,
+      engineersWithoutCalendar: engineersWithoutCalendar.length > 0 ? engineersWithoutCalendar : undefined
     };
   } catch (error) {
     console.error('Error checking availability:', error);

@@ -103,7 +103,7 @@ export class MainStack extends cdk.Stack {
 
   private createSQSQueue(name: string): sqs.Queue {
     return new sqs.Queue(this, name, {
-      queueName: `${name}-${this.stage}`,
+      queueName: `symentic-${name}-${this.stage}`,
       visibilityTimeout: cdk.Duration.seconds(300),
       retentionPeriod: cdk.Duration.hours(1),
     });
@@ -131,6 +131,16 @@ export class MainStack extends cdk.Stack {
     eventsResource.addMethod(
       'POST',
       new apigateway.LambdaIntegration(this.lambdaFunctions.router)
+    );
+    
+    // Create /auth/google/callback endpoint for OAuth
+    const authResource = api.root.addResource('auth');
+    const googleResource = authResource.addResource('google');
+    const callbackResource = googleResource.addResource('callback');
+    
+    callbackResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(this.lambdaFunctions.calendarOauthCallback)
     );
 
     // Output API endpoint

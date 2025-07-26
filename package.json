@@ -42,7 +42,7 @@
     "axios": "^1.11.0",
     "dotenv": "^17.2.0",
     "express": "^5.1.0",
-    "googleapis": "^154.0.0",
+    "googleapis": "^153.0.0",
     "openai": "^5.10.2",
     "redis": "^5.6.1",
     "uuid": "^11.1.0"

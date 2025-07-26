@@ -16,7 +16,7 @@
     "@aws-sdk/client-sfn": "^3.848.0",
     "@aws-sdk/client-sqs": "^3.848.0",
     "@slack/web-api": "^7.9.3",
-    "googleapis": "^154.0.0",
+    "googleapis": "^153.0.0",
     "openai": "^5.10.2",
     "redis": "^5.6.1",
     "uuid": "^11.1.0"

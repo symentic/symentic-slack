@@ -184,6 +184,80 @@ ${bugInfo.impact ? `Impact: ${bugInfo.impact}` : 'Impact: Not provided'}`;
     }
   }
 
+  async enhanceBugDescription(bugData: {
+    description: string;
+    reproductionSteps?: string;
+    environment?: string;
+    impact?: string;
+    errorMessages?: string;
+    severity?: string;
+    category?: string;
+  }): Promise<{
+    enhancedDescription: string;
+    enhancedSteps?: string;
+    enhancedEnvironment?: string;
+    enhancedImpact?: string;
+  }> {
+    const systemPrompt = `You are a technical writer helping to create clear, comprehensive bug reports.
+Given the raw bug information (which may be very brief), expand it into proper sentences with technical context.
+
+IMPORTANT: Transform brief phrases into complete, informative sentences. For example:
+- Input: "Just broke entirely" → Output: "The user attempted to use the feature and encountered a complete failure with no fallback or error handling."
+- Input: "During checkout" → Output: "The issue occurred in the checkout flow, likely when processing payment or order submission."
+- Input: "Payment not processed" → Output: "Users are unable to complete transactions, resulting in failed payment processing and potential revenue loss."
+
+Guidelines:
+1. Convert ALL brief inputs into complete, professional sentences
+2. Add technical context and likely scenarios based on the description
+3. For reproduction steps: Create a numbered list with detailed steps, inferring logical flow
+4. For environment: Include likely browser, OS, and relevant technical details
+5. For impact: Describe specific business/user effects, quantify if possible
+6. If input is already detailed, enhance it further with technical insights
+7. Maintain the original meaning but make it much more comprehensive
+
+Example enhancement:
+- Description input: "error with payment system"
+- Enhanced: "Users are experiencing errors when attempting to process payments through the system. The payment gateway appears to be failing or returning unexpected responses during transaction processing."
+
+Respond in JSON format:
+{
+  "enhancedDescription": "Complete sentences describing the issue...",
+  "enhancedSteps": "1. User navigates to...\n2. User attempts to...\n3. System fails with...",
+  "enhancedEnvironment": "Issue observed during checkout process on production environment. Likely affecting multiple browsers and payment methods...",
+  "enhancedImpact": "Critical business impact: Users cannot complete purchases, leading to immediate revenue loss and customer frustration..."
+}`;
+
+    const userPrompt = `Bug Information:
+Description: ${bugData.description}
+Reproduction Steps: ${bugData.reproductionSteps || 'Not provided'}
+Environment: ${bugData.environment || 'Not specified'}
+Impact: ${bugData.impact || 'Not specified'}
+Error Messages: ${bugData.errorMessages || 'None provided'}
+Severity: ${bugData.severity || 'Unknown'}
+Category: ${bugData.category || 'General'}`;
+
+    try {
+      const response = await this.classifyWithModel(systemPrompt, userPrompt, 'gpt-4o-mini');
+      const result = JSON.parse(response);
+      
+      return {
+        enhancedDescription: result.enhancedDescription || bugData.description,
+        enhancedSteps: result.enhancedSteps || bugData.reproductionSteps,
+        enhancedEnvironment: result.enhancedEnvironment || bugData.environment,
+        enhancedImpact: result.enhancedImpact || bugData.impact
+      };
+    } catch (error) {
+      console.error('Bug enhancement failed:', error);
+      // Return original data if enhancement fails
+      return {
+        enhancedDescription: bugData.description,
+        enhancedSteps: bugData.reproductionSteps,
+        enhancedEnvironment: bugData.environment,
+        enhancedImpact: bugData.impact
+      };
+    }
+  }
+
   // Generate contextual follow-up questions based on partial information
   async generateContextualFollowUps(bugContext: {
     description: string;

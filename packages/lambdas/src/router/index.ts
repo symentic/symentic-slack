@@ -1,5 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { App, AwsLambdaReceiver } from '@slack/bolt';
+import { WebClient } from '@slack/web-api';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 import { LambdaClient, InvokeCommand } from '@aws-sdk/client-lambda';
 import { intentClassifier } from '@symentic/core';
@@ -9,6 +10,7 @@ import { executionTracker } from '@symentic/core';
 import { redisService } from '@symentic/core';
 import { profileEngramService } from '@symentic/core';
 import { ProfileInteraction, SlackUserData } from '@symentic/core';
+import { googleCalendarService } from '@symentic/core';
 
 // Initialize Step Functions client with explicit configuration
 const stepFunctions = new SFNClient({
@@ -257,6 +259,98 @@ function shouldProcessMessage(message: SlackMessage): boolean {
 }
 
 // Handle slash commands
+app.command('/connect-calendar', async ({ command, ack, say }) => {
+  // Acknowledge command request
+  await ack();
+  
+  const userId = command.user_id;
+  
+  try {
+    // Generate auth URL for the user
+    const authUrl = await googleCalendarService.getAuthUrl(userId);
+    
+    await say({
+      text: '📅 Connect Your Google Calendar',
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '*Connect your Google Calendar for automatic meeting scheduling*\n\nOnce connected, I can:\n• Check your availability for bug triage meetings\n• Schedule meetings directly on your calendar\n• Find common time slots with your team\n• Send you meeting invitations'
+          }
+        },
+        {
+          type: 'divider'
+        },
+        {
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: {
+                type: 'plain_text',
+                text: 'Connect Google Calendar'
+              },
+              url: authUrl,
+              style: 'primary'
+            }
+          ]
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: '_Your calendar data will be used only for scheduling bug triage meetings. You can disconnect at any time._'
+            }
+          ]
+        }
+      ]
+    });
+  } catch (error) {
+    console.error('Error generating calendar auth URL:', error);
+    await say('❌ Unable to generate calendar connection link. Please try again later.');
+  }
+});
+
+app.command('/disconnect-calendar', async ({ command, ack, say }) => {
+  // Acknowledge command request
+  await ack();
+  
+  const userId = command.user_id;
+  
+  try {
+    // Import dynamoDBService
+    const { dynamoDBService } = await import('@symentic/core');
+    
+    // Delete calendar tokens
+    await dynamoDBService.deleteCalendarToken(userId);
+    
+    await say({
+      text: '✅ Calendar Disconnected',
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '✅ *Your Google Calendar has been disconnected*'
+          }
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: 'Your calendar data has been removed from Symentic. You can reconnect at any time using `/connect-calendar`.'
+          }
+        }
+      ]
+    });
+  } catch (error) {
+    console.error('Error disconnecting calendar:', error);
+    await say('❌ Unable to disconnect calendar. Please try again later.');
+  }
+});
+
 app.command('/refresh-profile', async ({ command, ack, say, client }) => {
   // Acknowledge command request
   await ack();
@@ -708,7 +802,7 @@ async function startBugTriageWorkflow(
       message.user!,
       threadTs,
       'bug_triage',
-      result.executionArn
+      result.executionArn!
     );
     
     console.log('=== startBugTriageWorkflow COMPLETED ===');
@@ -721,11 +815,155 @@ async function startBugTriageWorkflow(
   }
 }
 
+// Handle interactive button clicks for meeting confirmation
+app.action('meeting_time_selection', async ({ ack }) => {
+  await ack();
+  // Radio button selection is stored, no immediate action needed
+});
+
+app.action('confirm_meeting', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const payload = body as any;
+    const buttonValue = JSON.parse(payload.actions[0].value);
+    const selectedTimeValue = payload.state?.values?.[Object.keys(payload.state.values)[0]]?.meeting_time_selection?.selected_option?.value;
+    
+    if (!selectedTimeValue) {
+      await client.chat.postEphemeral({
+        channel: payload.channel.id,
+        user: payload.user.id,
+        text: '⚠️ Please select a time slot before confirming the meeting.'
+      });
+      return;
+    }
+    
+    const selectedTime = JSON.parse(selectedTimeValue);
+    const meetingStart = new Date(selectedTime.start);
+    
+    // Create the actual calendar event
+    try {
+      const { googleCalendarService } = await import('@symentic/core');
+      
+      // Create meeting for the user who clicked confirm
+      const attendeeEmails = buttonValue.engineers.map((userId: string) => `${userId}@company.com`);
+      const calendarEvent = await googleCalendarService.createMeeting(
+        payload.user.id,
+        attendeeEmails,
+        `Bug Triage: ${selectedTime.bugId}`,
+        `Bug triage meeting for ${selectedTime.bugId}`,
+        meetingStart,
+        new Date(selectedTime.end)
+      );
+      
+      // Update the message to show confirmation
+      await client.chat.update({
+        channel: payload.channel.id,
+        ts: payload.message.ts,
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: '✅ Meeting Scheduled!'
+            }
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Time:* ${meetingStart.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZone: 'America/New_York'
+              })}\n*Duration:* 30 minutes\n*Meeting Link:* ${calendarEvent.eventLink || 'Check your calendar'}`
+            }
+          },
+          {
+            type: 'context',
+            elements: [
+              {
+                type: 'mrkdwn',
+                text: `Scheduled by <@${payload.user.id}> • Calendar invites sent to all attendees`
+              }
+            ]
+          }
+        ],
+        text: 'Meeting scheduled successfully!'
+      });
+    } catch (calendarError) {
+      console.error('Failed to create calendar event:', calendarError);
+      
+      // Fallback - just show the scheduled time without calendar integration
+      await client.chat.update({
+        channel: payload.channel.id,
+        ts: payload.message.ts,
+        blocks: [
+          {
+            type: 'header',
+            text: {
+              type: 'plain_text',
+              text: '📅 Meeting Time Selected'
+            }
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: `*Time:* ${meetingStart.toLocaleString('en-US', {
+                weekday: 'short',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                timeZone: 'America/New_York'
+              })}\n*Duration:* 30 minutes\n\n_Please add this to your calendar manually._`
+            }
+          }
+        ],
+        text: 'Meeting time selected'
+      });
+    }
+  } catch (error) {
+    console.error('Error confirming meeting:', error);
+    await client.chat.postEphemeral({
+      channel: (body as any).channel.id,
+      user: (body as any).user.id,
+      text: '❌ Sorry, there was an error scheduling the meeting. Please try again.'
+    });
+  }
+});
+
+app.action('skip_meeting', async ({ body, ack, client }) => {
+  await ack();
+  
+  const payload = body as any;
+  
+  // Update the message to show meeting was skipped
+  await client.chat.update({
+    channel: payload.channel.id,
+    ts: payload.message.ts,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '⏭️ Meeting scheduling skipped. The bug triage will continue asynchronously in this channel.'
+        }
+      }
+    ],
+    text: 'Meeting skipped'
+  });
+});
+
 // Lambda handler
 export const handler = async (
   event: APIGatewayProxyEvent,
   context: { requestId: string },
-  callback: (error?: Error | null, result?: APIGatewayProxyResult) => void
+  callback: any
 ): Promise<APIGatewayProxyResult> => {
   console.log('Router Lambda invoked:', JSON.stringify({
     requestId: context.requestId,
@@ -733,8 +971,51 @@ export const handler = async (
     timestamp: new Date().toISOString()
   }, null, 2));
   
-  // Handle URL verification
-  if (event.body) {
+  // Handle OAuth callback
+  if (event.path === '/auth/google/callback' && event.httpMethod === 'GET') {
+    console.log('OAuth callback received');
+    const code = event.queryStringParameters?.code;
+    const state = event.queryStringParameters?.state;
+    
+    if (!code || !state) {
+      return {
+        statusCode: 400,
+        headers: { 'Content-Type': 'text/html' },
+        body: '<html><body><h1>Error</h1><p>Missing authorization code or state.</p></body></html>'
+      };
+    }
+    
+    try {
+      await googleCalendarService.handleAuthCallback(code, state);
+      
+      // Send success message to Slack
+      const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
+      await slack.chat.postMessage({
+        channel: state,
+        text: '✅ Your Google Calendar has been successfully connected!'
+      });
+      
+      return {
+        statusCode: 200,
+        headers: { 'Content-Type': 'text/html' },
+        body: `<html><body style="font-family: Arial; text-align: center; padding: 50px;">
+          <h1>✅ Success!</h1>
+          <p>Your Google Calendar has been connected.</p>
+          <p>You can close this window and return to Slack.</p>
+        </body></html>`
+      };
+    } catch (error) {
+      console.error('OAuth callback error:', error);
+      return {
+        statusCode: 500,
+        headers: { 'Content-Type': 'text/html' },
+        body: `<html><body><h1>Error</h1><p>${error}</p></body></html>`
+      };
+    }
+  }
+  
+  // Handle URL verification (only try JSON parse for actual JSON content)
+  if (event.body && event.headers['Content-Type']?.includes('application/json')) {
     try {
       const body = JSON.parse(event.body);
       console.log('Request body type:', body.type, 'Event ID:', body.event_id);

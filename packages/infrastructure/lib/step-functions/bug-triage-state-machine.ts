@@ -125,12 +125,12 @@ export class BugTriageStateMachine extends Construct {
       }),
 
       checkCalendarAvailability: new stepfunctionsTasks.LambdaInvoke(this, 'CheckCalendarAvailability', {
-        lambdaFunction: lambdaFunctions.calendarCheckAvailability,
+        lambdaFunction: lambdaFunctions.bugTriageCheckAvailability,
         resultPath: '$.availability',
       }),
 
       scheduleMeeting: new stepfunctionsTasks.LambdaInvoke(this, 'ScheduleMeeting', {
-        lambdaFunction: lambdaFunctions.calendarScheduleMeeting,
+        lambdaFunction: lambdaFunctions.bugTriageScheduleMeeting,
         resultPath: '$.meeting',
       }),
 
@@ -196,6 +196,17 @@ export class BugTriageStateMachine extends Construct {
         },
       }),
 
+      setEnhancedBugReport: new stepfunctions.Pass(this, 'SetEnhancedBugReport', {
+        parameters: {
+          'bugReport.$': '$.analysis.Payload.enhancedBugReport',
+          'context.$': '$.context',
+          'threadTs.$': '$.threadTs',
+          'bugId.$': '$.analysis.Payload.bugId',
+          'analysis.$': '$.analysis',
+          'attemptCount.$': '$.attemptCount',
+        },
+      }),
+
       bugTriageComplete: new stepfunctions.Succeed(this, 'BugTriageComplete'),
       bugReportCancelled: new stepfunctions.Succeed(this, 'BugReportCancelled'),
       
@@ -255,6 +266,7 @@ export class BugTriageStateMachine extends Construct {
     // Chain the tasks
     tasks.analyzeBugReport
       .next(tasks.updateSeverityIfEmergency)
+      .next(states.setEnhancedBugReport)
       .next(states.checkReportQuality);
     
     tasks.generateFollowUpQuestions

@@ -1,11 +1,14 @@
 import { Handler } from 'aws-lambda';
 
 interface BugReportData {
+  bugId?: string;
+  bugNumber?: number;
   description: string;
   reportedBy: string;
   channel: string;
   timestamp: string;
   severity?: string;
+  category?: string;
   reproductionSteps?: string;
   environment?: string;
   impact?: string;
@@ -36,6 +39,9 @@ interface UpdateBugEvent {
       isEmergency?: boolean;
       completenessScore?: number;
       severity?: string;
+      category?: string;
+      bugId?: string;
+      bugNumber?: number;
     };
   };
   // Legacy field for backward compatibility
@@ -62,10 +68,22 @@ export const handler: Handler<UpdateBugEvent, BugReportData> = async (event) => 
     lastUpdated: new Date().toISOString()
   };
   
-  // Update severity from analysis
+  // Update fields from analysis
   if (analysisResult?.severity && analysisResult.severity !== bugReportData.severity) {
     console.log(`Updating severity from ${bugReportData.severity} to ${analysisResult.severity}`);
     updatedBugReport.severity = analysisResult.severity;
+  }
+  
+  if (analysisResult?.category) {
+    updatedBugReport.category = analysisResult.category;
+  }
+  
+  if (analysisResult?.bugId && !bugReportData.bugId) {
+    updatedBugReport.bugId = analysisResult.bugId;
+  }
+  
+  if (analysisResult?.bugNumber && !bugReportData.bugNumber) {
+    updatedBugReport.bugNumber = analysisResult.bugNumber;
   }
   
   // Only update fields if new information is provided

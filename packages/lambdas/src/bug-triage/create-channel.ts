@@ -1,6 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { bugCounterService } from '@symentic/core';
+import { extractPayload, extractArrayPayload } from '../utils/step-functions';
 
 interface CreateChannelEvent {
   bugReport: {
@@ -53,8 +54,8 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
   console.log('Creating/updating triage channel:', JSON.stringify(event, null, 2));
   
   // Handle Step Functions nested payload structure
-  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
-  const engineers = event.engineers && 'Payload' in event.engineers ? event.engineers.Payload : (event.engineers || []);
+  const bugReport = extractPayload(event.bugReport);
+  const engineers = extractArrayPayload(event.engineers);
   
   if (!bugReport) {
     throw new Error('Bug report data is missing');
@@ -63,8 +64,8 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
   
   try {
-    let channelId: string;
-    let channelName: string;
+    let channelId: string = '';
+    let channelName: string = '';
     let isExisting = false;
     let bugNumber = bugReport.bugNumber;
     
@@ -137,10 +138,10 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
     // Invite relevant users
     const userIds = [
       bugReport.reportedBy,
-      ...(engineers || []).map((e: any) => e.userId)
+      ...engineers.map((e: any) => e.userId)
     ].filter(Boolean);
     
-    if (userIds.length > 0) {
+    if (userIds.length > 0 && channelId) {
       try {
         await slack.conversations.invite({
           channel: channelId,
@@ -154,15 +155,15 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
     
     // Post bug overview (for new channels or updates to existing)
     const overviewMessage = await slack.chat.postMessage({
-      channel: channelId,
-      blocks: createBugOverviewBlocks(bugReport, engineers, bugNumber, isExisting)
+      channel: channelId!,
+      blocks: createBugOverviewBlocks(bugReport, engineers as Array<{userId: string; name: string}>, bugNumber, isExisting)
     });
     
     // Pin the overview message for easy reference
     if (overviewMessage.ts && !isExisting) {
       try {
         await slack.pins.add({
-          channel: channelId,
+          channel: channelId!,
           timestamp: overviewMessage.ts
         });
       } catch (error) {
@@ -171,8 +172,8 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
     }
     
     return {
-      channelId,
-      channelName,
+      channelId: channelId!,
+      channelName: channelName!,
       isExisting,
       bugNumber
     };
@@ -189,12 +190,13 @@ function createBugOverviewBlocks(
   isUpdate = false
 ): any[] {
   const severity = bugReport.severity || 'medium';
-  const severityEmoji = {
+  const severityMap: { [key: string]: string } = {
     critical: '🔴',
     high: '🟠',
     medium: '🟡',
     low: '🟢'
-  }[severity] || '🟡';
+  };
+  const severityEmoji = severityMap[severity.toLowerCase()] || '🟡';
   
   const blocks: any[] = [
     {
@@ -221,7 +223,7 @@ function createBugOverviewBlocks(
         },
         {
           type: 'mrkdwn',
-          text: `*Bug ID:*\n\`${bugReport.bugId}\``
+          text: `*Bug ID:*\n\`${bugReport.bugId || 'Not assigned'}\``
         }
       ]
     },

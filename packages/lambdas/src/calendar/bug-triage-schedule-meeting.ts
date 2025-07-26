@@ -1,5 +1,4 @@
 import { Handler } from 'aws-lambda';
-import { googleCalendarService } from '@symentic/core';
 import { WebClient } from '@slack/web-api';
 import { extractPayload, extractArrayPayload } from '../utils/step-functions';
 
@@ -34,6 +33,8 @@ interface ScheduleMeetingEvent {
         end: string;
         availableEngineers: string[];
       }>;
+      engineersWithoutCalendar?: string[];
+      calendarAuthUrl?: string;
     };
   } | {
     suggestedTime?: string;
@@ -42,6 +43,8 @@ interface ScheduleMeetingEvent {
       end: string;
       availableEngineers: string[];
     }>;
+    engineersWithoutCalendar?: string[];
+    calendarAuthUrl?: string;
   };
   channel?: {
     Payload?: {
@@ -89,7 +92,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       availableEngineers: string[];
     }> = availability.slots?.map(slot => ({
       ...slot,
-      availableEngineers: engineers.map((e: any) => e.userId)
+      availableEngineers: engineers.map(e => e.userId)
     })) || [];
     
     if (availableSlots.length === 0) {
@@ -98,7 +101,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       availableSlots.push({
         start: defaultTime,
         end: new Date(new Date(defaultTime).getTime() + 30 * 60000).toISOString(),
-        availableEngineers: engineers.map((e: any) => e.userId)
+        availableEngineers: engineers.map(e => e.userId)
       });
     }
     
@@ -108,7 +111,9 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       channel.channelId, 
       availableSlots, 
       engineers,
-      bugReport
+      bugReport,
+      availability.engineersWithoutCalendar,
+      availability.calendarAuthUrl
     );
     
     // Return a placeholder result - actual scheduling will happen after confirmation
@@ -116,7 +121,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       meetingId: `pending-${Date.now()}`,
       startTime: availableSlots[0].start,
       endTime: availableSlots[0].end,
-      attendees: engineers.map((e: any) => e.userId),
+      attendees: engineers.map(e => e.userId),
       confirmationRequested: true,
       proposedSlots: availableSlots
     };
@@ -129,7 +134,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       meetingId: `meeting-${Date.now()}`,
       startTime: fallbackTime,
       endTime: new Date(new Date(fallbackTime).getTime() + 30 * 60000).toISOString(),
-      attendees: engineers.map((e: any) => e.userId),
+      attendees: engineers.map(e => e.userId),
       confirmationRequested: false
     };
   }
@@ -151,10 +156,12 @@ async function postMeetingConfirmationRequest(
     end: string;
     availableEngineers: string[];
   }>,
-  engineers: any[],
-  bugReport: any
+  engineers: Array<{ userId: string; name: string }>,
+  bugReport: { bugId: string; description: string; severity?: string; reportedBy?: string },
+  engineersWithoutCalendar?: string[],
+  calendarAuthUrl?: string
 ) {
-  const blocks: any[] = [
+  const blocks: Array<{ type: string; text?: { type: string; text: string }; accessory?: unknown; elements?: unknown[] }> = [
     {
       type: 'header',
       text: {
@@ -174,10 +181,44 @@ async function postMeetingConfirmationRequest(
     }
   ];
   
+  // Add calendar connection notice if some engineers don't have calendar connected
+  if (engineersWithoutCalendar && engineersWithoutCalendar.length > 0) {
+    const engineerMentions = engineersWithoutCalendar.map(userId => `<@${userId}>`).join(', ');
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `⚠️ **Calendar Not Connected**: ${engineerMentions}\n\nTo enable automatic availability checking, please connect your Google Calendar.`
+      },
+      accessory: {
+        type: 'button',
+        text: {
+          type: 'plain_text',
+          text: 'Connect Calendar'
+        },
+        url: calendarAuthUrl || '#',
+        action_id: 'connect_calendar'
+      }
+    });
+    
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '_Without calendar access, we assume you\'re available during business hours. Connect your calendar for accurate scheduling._'
+        }
+      ]
+    });
+    
+    blocks.push({
+      type: 'divider'
+    });
+  }
+  
   // Add available time slots with radio buttons
   const options = availableSlots.slice(0, 5).map((slot, index) => {
     const startTime = new Date(slot.start);
-    const endTime = new Date(slot.end);
     const allAvailable = slot.availableEngineers.length === engineers.length;
     
     const timeStr = startTime.toLocaleString('en-US', {
@@ -258,7 +299,7 @@ async function postMeetingConfirmationRequest(
     elements: [
       {
         type: 'mrkdwn',
-        text: `*Attendees:* ${engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
+        text: `*Attendees:* ${engineers.map(e => `<@${e.userId}>`).join(', ')}`
       }
     ]
   });

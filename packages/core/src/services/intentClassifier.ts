@@ -49,6 +49,33 @@ export class IntentClassifier {
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
     const { message, userId, channelId, recentContext, threadContext } = options;
     
+    // Pattern-based bug detection for common bug report phrases
+    const bugPatterns = [
+      /\b(error|errors)\s+(with|in)\s+\w+/i,
+      /\b(payment|login|system|feature|api|server)\s+(error|issue|problem|bug)/i,
+      /\b(error|issue|problem|bug)\s+(with|in)\s+(payment|login|system|feature|api|server)/i,
+      /\b(not\s+working|broken|crashed|down|failed|failing)\b/i,
+      /\b(bug:|issue:|error:|problem:)/i,
+      /\bcannot\s+(login|pay|access|connect)/i,
+      /\bunable\s+to\s+(login|pay|access|connect)/i,
+      // More flexible patterns for typos and variations
+      /\berror\s+with.{0,10}(payment|system|login|api)/i,
+      /\b(there\s+is|there's)\s+(an?\s+)?(error|issue|problem|bug)/i,
+      /\b(payment|system|login|api).{0,10}(error|issue|problem|not\s+work)/i,
+      // Ultra-flexible patterns for common typos
+      /error.*payment/i,
+      /payment.*error/i,
+      /error.*system/i,
+      /system.*error/i
+    ];
+    
+    const lowerMessage = message.toLowerCase();
+    const isBugReport = bugPatterns.some(pattern => pattern.test(lowerMessage));
+    
+    if (isBugReport) {
+      console.log('Pattern match detected for bug report!');
+    }
+    
     // Quick filter disabled for demo - let ChatGPT handle all classification
     // const insectPatterns = [
     //   /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
@@ -91,9 +118,11 @@ DO NOT classify as "bug.report" for:
 
 Context clues for software bugs:
 - Error messages, crashes, unexpected behavior
-- Feature not working, system down, payment failed
+- Feature not working, system down, payment failed, payment errors
 - Code, API, database, server issues
 - Performance problems, UI glitches
+- Messages containing "error" with system names (payment system, login system, etc.)
+- Messages about something not working or being broken
 
 Special handling:
 - If in a thread with active bug triage, classify follow-ups as "bug.response"
@@ -104,7 +133,8 @@ Special handling:
 - Physical bugs/insects should be "general.chatter"
 
 Intent classification rules:
-- Only classify as bug.report for clear software/technical issues
+- Classify as bug.report when message contains: "error", "bug", "issue", "problem", "broken", "not working", "failed", "crash", "down" in technical context
+- Phrases like "error with [system]", "[system] error", "[feature] not working" are strong bug indicators
 - Only use general.greeting if the bot is specifically mentioned (e.g., "@symentic hi", "hello symentic")
 - Only use general.help when explicitly asking what the bot can do
 - For greetings without bot mention (just "hi", "hello"), use general.chatter
@@ -117,7 +147,8 @@ Respond in JSON format only.`;
 User: ${userId}
 Channel: ${channelId}
 ${recentContext ? `Recent context: ${recentContext.join(' | ')}` : ''}
-${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}`;
+${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}
+${isBugReport ? 'CRITICAL: This message matches bug report patterns. You MUST classify as "bug.report" with confidence >= 0.8 unless it explicitly mentions physical insects.' : ''}`;
 
     try {
       const response = await openAIService.classifyWithModel(
@@ -127,6 +158,20 @@ ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bu
       );
 
       const classification = JSON.parse(response);
+      
+      console.log(`AI Classification: ${classification.intent} (${classification.confidence}), Pattern match: ${isBugReport}`);
+      
+      // Override classification if pattern strongly matches bug report but AI misclassified
+      if (isBugReport && classification.intent !== 'bug.report') {
+        console.log(`Pattern override: Forcing bug.report classification (was ${classification.intent})`);
+        return {
+          intent: 'bug.report',
+          confidence: Math.max(0.8, classification.confidence),
+          entities: classification.entities || {},
+          modelUsed: model,
+          requiresFollowUp: classification.missingInfo || []
+        };
+      }
       
       // Ensure all required fields
       return {

@@ -1,6 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { BugReport } from '@symentic/core';
+import { extractPayload, extractArrayPayload } from '../utils/step-functions';
 
 interface SlackNotificationEvent {
   action: string;
@@ -78,12 +79,11 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
 };
 
 async function sendBugQuestions(slack: WebClient, event: SlackNotificationEvent) {
-  if (!event.questions) {
+  const questionsData = extractPayload(event.questions);
+  if (!questionsData || !questionsData.questions) {
     throw new Error('Questions not provided');
   }
-  // Handle Step Functions nested payload structure
-  const questionsData = 'Payload' in event.questions ? event.questions.Payload : event.questions;
-  const questions = questionsData?.questions || [];
+  const questions = questionsData.questions;
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
@@ -131,23 +131,19 @@ async function sendTimeoutMessage(slack: WebClient, event: SlackNotificationEven
 }
 
 async function sendCompletionMessage(slack: WebClient, event: SlackNotificationEvent) {
-  if (!event.bugReport) {
+  const bugReport = extractPayload(event.bugReport);
+  const engineers = extractArrayPayload(event.engineers);
+  const meetingData = extractPayload(event.meeting);
+  
+  if (!bugReport) {
     throw new Error('Bug report not provided');
   }
-  // Handle Step Functions nested payload structure
-  const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
   
   // Check if this is a duplicate bug
-  const isDuplicate = bugReport.duplicateOf || bugReport.isDuplicate;
+  const isDuplicate = !!bugReport.duplicateOf;
   const bugNumber = bugReport.bugNumber ? `#${bugReport.bugNumber}` : '';
   
-  const blocks: Array<{
-    type: string;
-    text?: {
-      type: string;
-      text: string;
-    };
-  }> = [];
+  const blocks: any[] = [];
   
   if (isDuplicate) {
     blocks.push({
@@ -188,32 +184,26 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
     }
   }
   
-  // Handle Step Functions nested payload structure for engineers
-  if (event.engineers) {
-    const engineersData = 'Payload' in event.engineers ? event.engineers.Payload : event.engineers;
-    if (engineersData && engineersData.length > 0) {
-      blocks.push({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `*Assigned to:* ${engineersData.map((e) => `<@${e.userId}>`).join(', ')}`
-        }
-      });
-    }
+  // Engineers info
+  if (engineers.length > 0) {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Assigned to:* ${engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
+      }
+    });
   }
   
-  // Handle Step Functions nested payload structure for meeting
-  if (event.meeting) {
-    const meetingData = 'Payload' in event.meeting ? event.meeting.Payload : event.meeting;
-    if (meetingData) {
-      blocks.push({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `*Triage Meeting:* ${new Date(meetingData.startTime).toLocaleString()}`
-        }
-      });
-    }
+  // Meeting info
+  if (meetingData) {
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Triage Meeting:* ${new Date(meetingData.startTime).toLocaleString()}`
+      }
+    });
   }
   
   await slack.chat.postMessage({
@@ -224,8 +214,7 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
 }
 
 async function sendMaxAttemptsMessage(slack: WebClient, event: SlackNotificationEvent) {
-  // Handle Step Functions nested payload structure
-  const bugReportData = event.bugReport && 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
+  const bugReport = extractPayload(event.bugReport);
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
@@ -249,7 +238,7 @@ async function sendMaxAttemptsMessage(slack: WebClient, event: SlackNotification
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*Summary:* ${(bugReportData as BugReport | undefined)?.description || 'No description available'}\n*Status:* Incomplete - manual review required`
+          text: `*Summary:* ${(bugReport as BugReport | undefined)?.description || 'No description available'}\n*Status:* Incomplete - manual review required`
         }
       }
     ]

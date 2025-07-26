@@ -1,5 +1,6 @@
 import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
+import { extractPayload } from '../utils/step-functions';
 
 interface ProcessResponseEvent {
   response?: {
@@ -42,7 +43,7 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
   
   // Handle Step Functions nested payload structure
   // The response might be in event.userResponse.userResponse due to SQS message structure
-  const responseData = event.userResponse?.userResponse || event.response?.Payload || event.response;
+  const responseData = event.userResponse?.userResponse || extractPayload(event.response) || event.response;
   
   if (!responseData || !responseData.text) {
     console.error('No valid response text found in event:', event);
@@ -63,7 +64,7 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
   try {
     // Use AI to extract structured information from the response
     // Handle Step Functions nested payload structure
-    const analysisData = event.analysis?.Payload || event.analysis;
+    const analysisData = extractPayload(event.analysis) || event.analysis;
     const systemPrompt = `Extract structured bug report information from the user's response.
 Current bug context: ${JSON.stringify(event.bugReport)}
 Missing information: ${analysisData.missingInformation.join(', ')}

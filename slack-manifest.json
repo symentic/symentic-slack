@@ -26,30 +26,44 @@
     "slash_commands": [
       {
         "command": "/refresh-profile",
-        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
         "description": "Refresh your profile engram",
         "usage_hint": "[no parameters needed]",
         "should_escape": false
       },
       {
         "command": "/sync-workspace",
-        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
         "description": "Sync all workspace profiles (admin only)",
         "usage_hint": "[--force to bypass rate limit]",
         "should_escape": false
       },
       {
         "command": "/link-bugs",
-        "url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
         "description": "Link two related bugs together",
         "usage_hint": "[bug-number-1] [bug-number-2]",
+        "should_escape": false
+      },
+      {
+        "command": "/connect-calendar",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Connect your Google Calendar for meeting scheduling",
+        "usage_hint": "[no parameters needed]",
+        "should_escape": false
+      },
+      {
+        "command": "/disconnect-calendar",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Disconnect your Google Calendar",
+        "usage_hint": "[no parameters needed]",
         "should_escape": false
       }
     ]
   },
   "oauth_config": {
     "redirect_urls": [
-      "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/oauth_redirect"
+      "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/oauth_redirect"
     ],
     "scopes": {
       "bot": [
@@ -109,7 +123,7 @@
   },
   "settings": {
     "event_subscriptions": {
-      "request_url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+      "request_url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
       "bot_events": [
         "app_home_opened",
         "app_mention",
@@ -152,7 +166,7 @@
     },
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://dnnc01ddj0.execute-api.us-east-1.amazonaws.com/prod/slack/events"
+      "request_url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,

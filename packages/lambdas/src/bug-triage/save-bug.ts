@@ -53,6 +53,8 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   // Extract workspace ID from the channel ID pattern
   const workspaceId = bugReport.channelId?.substring(0, 11).match(/^[A-Z][0-9A-Z]+/)?.[0] || 'unknown';
   
+  // Enhancement is now done in analyze Lambda, no need to do it here
+  
   const bugReportData: BugReport = {
     ...bugReport,
     bugId,
@@ -122,7 +124,7 @@ async function enrichUserProfiles(
   try {
     // Extract businessId from the first part of the channel ID (e.g., C096L631QGM -> T096L)
     // This is a simplified approach - in production, you'd want to store businessId properly
-    const businessId = bugReport.channel?.substring(0, 5).replace('C', 'T') || '';
+    const businessId = bugReport.channelId?.substring(0, 5).replace('C', 'T') || '';
     
     if (!businessId) {
       console.log('No businessId found, skipping profile enrichment');
@@ -136,9 +138,7 @@ async function enrichUserProfiles(
         content: `Reported bug: "${bugReport.description.substring(0, 100)}..." - ${bugReport.severity} severity`,
         source: 'bug_report',
         metadata: {
-          bugId: bugReport.bugId,
-          severity: bugReport.severity,
-          category: bugReport.category
+          bugId: bugReport.bugId
         }
       });
       
@@ -167,8 +167,7 @@ async function enrichUserProfiles(
           content: `Assigned to fix: "${bugReport.description.substring(0, 100)}..."`,
           source: 'bug_report',
           metadata: {
-            bugId: bugReport.bugId,
-            role: 'assigned_engineer'
+            bugId: bugReport.bugId
           }
         });
         

@@ -15,6 +15,36 @@ interface BugReportData {
   frequency?: string;
   completenessScore?: number;
   bugId?: string;
+  category?: string;
+}
+
+// Infer category from bug description
+function inferCategory(description: string): string {
+  const lowerDesc = description.toLowerCase();
+  
+  // Category patterns
+  const categoryPatterns = [
+    { pattern: /payment|checkout|transaction|billing|stripe|paypal|credit card/, category: 'Payment' },
+    { pattern: /login|auth|signin|signup|password|oauth|sso/, category: 'Authentication' },
+    { pattern: /api|endpoint|webhook|integration|rest|graphql/, category: 'API' },
+    { pattern: /ui|interface|button|display|screen|layout|css|style/, category: 'UI/UX' },
+    { pattern: /performance|slow|loading|timeout|lag|freeze/, category: 'Performance' },
+    { pattern: /database|sql|query|data|postgres|mongodb|redis/, category: 'Database' },
+    { pattern: /security|vulnerability|exploit|breach|permission/, category: 'Security' },
+    { pattern: /mobile|ios|android|app/, category: 'Mobile' },
+    { pattern: /email|notification|alert|messaging/, category: 'Communication' },
+    { pattern: /file|upload|download|storage|s3/, category: 'File Management' },
+    { pattern: /network|connection|timeout|dns|ssl/, category: 'Network' },
+    { pattern: /deploy|deployment|ci\/cd|build|pipeline/, category: 'DevOps' }
+  ];
+  
+  for (const { pattern, category } of categoryPatterns) {
+    if (pattern.test(lowerDesc)) {
+      return category;
+    }
+  }
+  
+  return 'General';
 }
 
 // Rule-based completeness calculation
@@ -99,8 +129,11 @@ interface AnalysisResult {
     similarity: number;
     description: string;
   }>;
+  bugId?: string;
   bugNumber?: number;
   descriptionHash?: string;
+  // Enhanced bug report data
+  enhancedBugReport?: BugReportData & { bugId: string; bugNumber?: number };
 }
 
 export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) => {
@@ -137,6 +170,9 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       .update(bugReportData.description.toLowerCase().trim().replace(/\s+/g, ' '))
       .digest('hex');
     
+    // Generate bug ID early so it's available throughout the workflow
+    const bugId = bugReportData.bugId || `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+    
     // Get next bug number (will be used whether duplicate or not)
     const bugNumber = await bugCounterService.getNextBugNumber(workspaceId);
     
@@ -166,6 +202,35 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
     // Calculate rule-based completeness score (more reliable)
     const ruleBasedScore = calculateRuleBasedCompleteness(bugReportData);
     console.log('Rule-based completeness score:', ruleBasedScore);
+    
+    // Enhance bug descriptions with AI before analysis
+    let enhancedData = {};
+    try {
+      const enhanced = await openAIService.enhanceBugDescription({
+        description: bugReportData.description,
+        reproductionSteps: bugReportData.reproductionSteps,
+        environment: bugReportData.environment,
+        impact: bugReportData.impact,
+        errorMessages: bugReportData.errorMessages,
+        severity: bugReportData.severity,
+        category: bugReportData.category
+      });
+      
+      enhancedData = {
+        description: enhanced.enhancedDescription || bugReportData.description,
+        reproductionSteps: enhanced.enhancedSteps || bugReportData.reproductionSteps,
+        environment: enhanced.enhancedEnvironment || bugReportData.environment,
+        impact: enhanced.enhancedImpact || bugReportData.impact
+      };
+      
+      // Apply enhanced data to bugReportData
+      Object.assign(bugReportData, enhancedData);
+      
+      console.log('Enhanced bug data:', enhancedData);
+    } catch (error) {
+      console.error('Failed to enhance bug description:', error);
+      // Continue with original data if enhancement fails
+    }
     
     // Use OpenAI to analyze the bug report for quality and generate questions
     let aiAnalysis;
@@ -257,12 +322,19 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       missingInformation: missingInfo.length > 0 ? missingInfo : aiAnalysis.missingInformation,
       followUpQuestions: followUpQuestions.length > 0 ? followUpQuestions : aiAnalysis.followUpQuestions,
       confidence: aiAnalysis.confidence || (ruleBasedScore / 100),
-      category: aiAnalysis.category,
+      category: aiAnalysis.category || inferCategory(bugReportData.description),
       isEmergency: aiAnalysis.isEmergency || false,
       severity: aiAnalysis.severity || 'medium',
+      bugId, // Include the bug ID
       bugNumber,
       descriptionHash,
-      ...duplicateInfo
+      ...duplicateInfo,
+      // Include the enhanced bug report data
+      enhancedBugReport: {
+        ...bugReportData,
+        bugId,
+        bugNumber
+      }
     };
     
     console.log('Final analysis result:', JSON.stringify(result, null, 2));

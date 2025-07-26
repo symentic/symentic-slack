@@ -5,7 +5,8 @@ import {
   GetCommand, 
   QueryCommand,
   UpdateCommand,
-  ScanCommand
+  ScanCommand,
+  DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import { UserProfile, Engram, BugReport, Meeting, AreaExpertise } from '../types/domain';
@@ -171,6 +172,17 @@ export class DynamoDBService {
     };
 
     await this.docClient.send(new PutCommand(params));
+  }
+
+  async deleteCalendarToken(userId: string): Promise<void> {
+    const params = {
+      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SymenticCalendarTokens',
+      Key: {
+        userId,
+      },
+    };
+
+    await this.docClient.send(new DeleteCommand(params));
   }
 
   async getCalendarToken(userId: string): Promise<Record<string, unknown> | null> {
