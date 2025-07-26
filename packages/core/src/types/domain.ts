@@ -7,6 +7,7 @@ export interface IntentResult {
   entities: Record<string, unknown>;
   modelUsed: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o';
   requiresFollowUp?: string[];
+  shouldRespond?: boolean;
 }
 
 // Context passed between agents and messages

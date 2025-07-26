@@ -51,6 +51,8 @@ export class LambdaFunctionsConstruct extends Construct {
       { name: 'bugResponseHandler', entry: 'src/bug-triage/response-handler.ts', handler: 'handler' },
       { name: 'calendarCheckAvailability', entry: 'src/calendar/check-availability.ts', handler: 'handler' },
       { name: 'calendarScheduleMeeting', entry: 'src/calendar/schedule-meeting.ts', handler: 'handler' },
+      { name: 'calendarQuery', entry: 'src/calendar/query.ts', handler: 'handler' },
+      { name: 'authGoogleCallback', entry: 'src/auth/google-callback.ts', handler: 'handler' },
       { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler' },
     ];
 
@@ -69,7 +71,7 @@ export class LambdaFunctionsConstruct extends Construct {
         logRetention: logs.RetentionDays.ONE_WEEK,
         bundling: {
           externalModules: ['aws-sdk'], // AWS SDK is available in the Lambda runtime
-          nodeModules: ['@slack/bolt', '@slack/web-api', 'aws-lambda'], // Include these in bundle
+          nodeModules: ['@slack/bolt', '@slack/web-api', 'aws-lambda', 'retry', 'p-retry'], // Include these in bundle
           format: lambdaNodejs.OutputFormat.CJS, // CommonJS format
           target: 'node20',
         },
@@ -120,6 +122,14 @@ export class LambdaFunctionsConstruct extends Construct {
         'states:ListStateMachines',
         'states:SendTaskSuccess',
         'states:SendTaskFailure',
+      ],
+      resources: ['*'],
+    }));
+
+    // Add Lambda invoke permissions
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: [
+        'lambda:InvokeFunction',
       ],
       resources: ['*'],
     }));

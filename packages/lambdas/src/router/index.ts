@@ -1,6 +1,6 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { App, AwsLambdaReceiver } from '@slack/bolt';
-import { StepFunctions } from 'aws-sdk';
+import { StepFunctions, Lambda } from 'aws-sdk';
 import { intentClassifier } from '@symentic/core';
 import { SlackMessage } from '@symentic/core';
 import { handleThreadResponse, storeWorkflowReference } from './thread-response-handler';
@@ -8,6 +8,7 @@ import { executionTracker } from '@symentic/core';
 import { redisService } from '@symentic/core';
 
 const stepFunctions = new StepFunctions();
+const lambda = new Lambda();
 
 // Initialize AWS Lambda receiver
 const awsLambdaReceiver = new AwsLambdaReceiver({
@@ -71,10 +72,11 @@ app.message(async ({ message, say, client, body }) => {
     }
   }
   
-  if (!shouldProcessMessage(msg)) {
-    console.log('Message filtered out:', msg.text?.substring(0, 50));
-    return;
-  }
+  // Pre-filtering disabled for MVP
+  // if (!shouldProcessMessage(msg)) {
+  //   console.log('Message filtered out:', msg.text?.substring(0, 50));
+  //   return;
+  // }
   
   try {
     // Classify intent
@@ -85,7 +87,13 @@ app.message(async ({ message, say, client, body }) => {
       recentContext: []
     });
     
-    console.log(`Intent classified: ${intent.intent} (${intent.confidence})`);
+    console.log(`Intent classified: ${intent.intent} (${intent.confidence}, shouldRespond: ${intent.shouldRespond})`);
+    
+    // First check if bot should respond
+    if (intent.shouldRespond === false) {
+      console.log('AI determined message not relevant for bot - ignoring');
+      return;
+    }
     
     // Route based on intent
     if (intent.intent.startsWith('bug.') && intent.intent !== 'bug.response') {
@@ -106,20 +114,36 @@ app.message(async ({ message, say, client, body }) => {
         });
       });
     } else if (intent.intent.startsWith('calendar.')) {
-      // Start calendar workflow
+      // Handle calendar intents
+      console.log(`Calendar intent detected: ${intent.intent}`);
+      
+      // Send immediate acknowledgment
       await say({
-        text: '📅 I\'ll help you with calendar management. This feature is being migrated to our new architecture.',
+        text: '📅 Let me check your calendar...',
         thread_ts: msg.thread_ts || msg.ts
       });
-    } else if (intent.confidence < 0.6) {
-      // Low confidence - don't respond
-      console.log('Low confidence intent, not responding');
+      
+      // For Phase 1: Direct Lambda invocation for simple queries
+      if (intent.intent === 'calendar.check' || intent.intent === 'calendar.query') {
+        await handleCalendarQuery(msg, intent, async (message: any) => {
+          await say(message);
+        }, client).catch(error => {
+          console.error('Failed to handle calendar query:', error);
+          say({
+            text: '❌ Sorry, I encountered an error checking your calendar.',
+            thread_ts: msg.thread_ts || msg.ts
+          });
+        });
+      } else {
+        // Other calendar intents will be handled in Phase 2+
+        await say({
+          text: '🚧 Advanced calendar features are coming soon! For now, I can check your schedule.',
+          thread_ts: msg.thread_ts || msg.ts
+        });
+      }
     } else {
-      // General response
-      await say({
-        text: 'I can help you with bug reports, scheduling meetings, and managing tasks. What would you like to do?',
-        thread_ts: msg.thread_ts || msg.ts
-      });
+      // Not a bug or calendar intent - don't respond
+      console.log(`Non-actionable intent: ${intent.intent} (${intent.confidence}) - not responding`);
     }
   } catch (error) {
     console.error('Error processing message:', error);
@@ -212,6 +236,60 @@ async function startBugTriageWorkflow(
     );
   } catch (error) {
     console.error('Failed to start bug triage workflow:', error);
+    throw error;
+  }
+}
+
+// Handle calendar query - Phase 1 simple Lambda invocation
+async function handleCalendarQuery(
+  message: SlackMessage,
+  intent: { intent: string; entities?: any; confidence: number },
+  say: (message: any) => Promise<void>,
+  client?: any
+) {
+  const stage = process.env.STAGE || 'prod';
+  const functionName = `semantic-slack-bot-${stage}-calendarQuery`;
+  
+  try {
+    // Get user's timezone from Slack if client is available
+    let userTimezone = 'America/Los_Angeles'; // Default fallback
+    if (client && message.user) {
+      try {
+        const userInfo = await client.users.info({ user: message.user });
+        userTimezone = userInfo.user?.tz || userTimezone;
+      } catch (error) {
+        console.error('Failed to get user timezone:', error);
+      }
+    }
+    
+    const params = {
+      FunctionName: functionName,
+      InvocationType: 'RequestResponse',
+      Payload: JSON.stringify({
+        action: 'query',
+        userId: message.user,
+        query: message.text,
+        entities: intent.entities,
+        userTimezone
+      })
+    };
+    
+    const result = await lambda.invoke(params).promise();
+    const response = JSON.parse(result.Payload as string);
+    
+    if (response.error) {
+      throw new Error(response.error);
+    }
+    
+    // Send the calendar information back to Slack
+    await say({
+      text: response.message || '📅 Here\'s your calendar information',
+      thread_ts: message.thread_ts || message.ts,
+      blocks: response.blocks // If the Lambda returns formatted blocks
+    });
+    
+  } catch (error) {
+    console.error('Error invoking calendar query Lambda:', error);
     throw error;
   }
 }

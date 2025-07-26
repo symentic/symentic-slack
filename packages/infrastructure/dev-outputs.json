@@ -1,0 +1,30 @@
+{
+  "semantic-slack-bot-v2-dev-richard": {
+    "SlackBotApiEndpointD3873DA5": "https://x1ktug3za3.execute-api.us-east-1.amazonaws.com/dev-richard/",
+    "workflowsTableName": "SemanticWorkflows-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionscalendarScheduleMeetingFunctionE78595B6ArnF987B931": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-calendarScheduleMeeting",
+    "ApiEndpoint": "https://x1ktug3za3.execute-api.us-east-1.amazonaws.com/dev-richard/slack/events",
+    "ExportsOutputFnGetAttLambdaFunctionscalendarCheckAvailabilityFunctionDFFFC257ArnF8D765B6": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-calendarCheckAvailability",
+    "calendarTokensTableName": "SemanticCalendarTokens-dev-richard",
+    "bugReportsTableName": "SemanticBugReports-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsbugAnalyzeFunctionC8F38484Arn999F15B9": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugAnalyze",
+    "RedisRedisPort13CA67FB": "6379",
+    "RedisRedisEndpointCDC87E15": "semantic-redis-dev-richard.lafcwa.ng.0001.use1.cache.amazonaws.com",
+    "BugResponseQueueUrl": "https://sqs.us-east-1.amazonaws.com/842733143746/BugResponseQueue-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsbugUpdateFunction143A1F56ArnC473B35B": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugUpdate",
+    "ExportsOutputRefBugResponseQueue323B16690943E167": "https://sqs.us-east-1.amazonaws.com/842733143746/BugResponseQueue-dev-richard",
+    "usersTableName": "SemanticUsers-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsbugProcessResponseFunction6C0B1472Arn61A3C868": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugProcessResponse",
+    "ExportsOutputFnGetAttLambdaFunctionsbugQuestionsFunctionFC6484B7ArnC8BFA4A0": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugQuestions",
+    "ExportsOutputFnGetAttBugResponseQueue323B1669ArnFF81D4D4": "arn:aws:sqs:us-east-1:842733143746:BugResponseQueue-dev-richard",
+    "executionsTableName": "SemanticExecutions-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsbugSaveFunction52812398ArnB4ECB9DC": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugSave",
+    "meetingsTableName": "SemanticMeetings-dev-richard",
+    "areaExpertiseTableName": "SemanticAreaExpertise-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsslackNotifyFunction5857726DArn83379F7E": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-slackNotify",
+    "workspacesTableName": "SemanticWorkspaces-dev-richard",
+    "engramsTableName": "SemanticEngrams-dev-richard",
+    "ExportsOutputFnGetAttLambdaFunctionsbugCreateChannelFunction32CBDF9DArnC4EC62DE": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugCreateChannel",
+    "ExportsOutputFnGetAttLambdaFunctionsbugFindEngineersFunctionA0D4CD82ArnCE74B43E": "arn:aws:lambda:us-east-1:842733143746:function:semantic-slack-bot-dev-richard-bugFindEngineers"
+  }
+}

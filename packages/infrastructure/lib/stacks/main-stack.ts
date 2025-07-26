@@ -135,10 +135,25 @@ export class MainStack extends cdk.Stack {
       new apigateway.LambdaIntegration(this.lambdaFunctions.router)
     );
 
-    // Output API endpoint
+    // Create /auth/google/callback endpoint for OAuth
+    const authResource = api.root.addResource('auth');
+    const googleResource = authResource.addResource('google');
+    const callbackResource = googleResource.addResource('callback');
+
+    callbackResource.addMethod(
+      'GET',
+      new apigateway.LambdaIntegration(this.lambdaFunctions.authGoogleCallback)
+    );
+
+    // Output API endpoints
     new cdk.CfnOutput(this, 'ApiEndpoint', {
       value: `${api.url}slack/events`,
       description: 'Slack Events API Endpoint',
+    });
+
+    new cdk.CfnOutput(this, 'GoogleCallbackEndpoint', {
+      value: `${api.url}auth/google/callback`,
+      description: 'Google OAuth Callback Endpoint',
     });
   }
 

@@ -55,18 +55,35 @@ export class IntentClassifier {
 2. Confidence level (0-1)
 3. Entities (participants, dates, priorities, etc.)
 4. Any missing required information
+5. shouldRespond: boolean - whether the bot should respond to this message
 
 Available intents:
-- calendar.schedule, calendar.check, calendar.cancel, calendar.reschedule
+- calendar.schedule, calendar.check, calendar.cancel, calendar.reschedule, calendar.query
 - bug.report, bug.status, bug.update, bug.response, bug.cancel
 - task.create, task.assign, task.status, task.complete
 - reminder.set, reminder.list
 - general.help, general.status, general.greeting, general.chatter, general.cancel
 - query.search, query.ask
 
+For calendar intents:
+- "what's my schedule", "show my calendar", "what meetings do I have" → calendar.check
+- "am I free at", "do I have time" → calendar.query
+- "schedule a meeting", "book time with" → calendar.schedule
+
+IMPORTANT: Set shouldRespond to true ONLY when:
+- The message is clearly asking for bot assistance (calendar, scheduling, bug reports, tasks)
+- The message contains explicit requests like "show my calendar", "schedule a meeting", "bug:"
+- The user is directly addressing the bot's capabilities
+
+Set shouldRespond to false when:
+- General conversation between humans (e.g., "hello", "thanks", "sounds good")
+- Ambiguous messages that aren't clearly requests for bot help
+- Messages that don't relate to the bot's capabilities
+- Simple acknowledgments or casual chat
+
 Special handling:
-- If in a thread with active bug triage, classify follow-ups as "bug.response"
-- Casual conversation or off-topic messages should be "general.chatter"
+- If in a thread with active bug triage, classify follow-ups as "bug.response" and set shouldRespond=true
+- Casual conversation or off-topic messages should be "general.chatter" with shouldRespond=false
 - "Cancel" or "stop" should map to appropriate cancel intent
 
 Respond in JSON format only.`;
@@ -92,7 +109,8 @@ ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bu
         confidence: classification.confidence || 0.5,
         entities: classification.entities || {},
         modelUsed: model,
-        requiresFollowUp: classification.missingInfo || []
+        requiresFollowUp: classification.missingInfo || [],
+        shouldRespond: classification.shouldRespond ?? false
       };
     } catch (error) {
       console.error('Intent classification failed:', error);
@@ -103,7 +121,8 @@ ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bu
         confidence: 0.1,
         entities: { originalMessage: message },
         modelUsed: model,
-        requiresFollowUp: []
+        requiresFollowUp: [],
+        shouldRespond: false
       };
     }
   }

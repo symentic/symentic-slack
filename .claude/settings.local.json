@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(aws:*)",
+      "Bash(brew install:*)",
+      "Bash(npx cdk list:*)",
+      "Bash(cp:*)",
+      "Bash(chmod:*)",
+      "Bash(npx cdk deploy:*)",
+      "Bash(export CDK_DEFAULT_ACCOUNT=842733143746)",
+      "Bash(export:*)",
+      "Bash(./deploy-dev.sh:*)",
+      "Bash(AWS_PROFILE=AdministratorAccess-842733143746 npx cdk deploy --all --context stage=dev-richard --require-approval never)",
+      "Bash(AWS_PROFILE=richard npx cdk deploy --all --context stage=dev-richard --require-approval never)",
+      "Bash(AWS_PROFILE=richard npm run cdk:deploy)",
+      "Bash(npx tsc:*)"
+    ],
+    "deny": []
+  }
+}

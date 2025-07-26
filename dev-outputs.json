@@ -1,0 +1,25 @@
+{
+  "dev-richard": {
+    "ApiEndpoint": "https://x1ktug3za3.execute-api.us-east-1.amazonaws.com/dev-richard/slack/events",
+    "BugResponseQueueUrl": "https://sqs.us-east-1.amazonaws.com/842733143746/BugResponseQueue-dev-richard",
+    "RedisEndpoint": "semantic-redis-dev-richard.lafcwa.ng.0001.use1.cache.amazonaws.com",
+    "RedisPort": "6379",
+    "DynamoDBTables": {
+      "areaExpertiseTable": "SemanticAreaExpertise-dev-richard",
+      "bugReportsTable": "SemanticBugReports-dev-richard",
+      "calendarTokensTable": "SemanticCalendarTokens-dev-richard",
+      "engramsTable": "SemanticEngrams-dev-richard",
+      "executionsTable": "SemanticExecutions-dev-richard",
+      "meetingsTable": "SemanticMeetings-dev-richard",
+      "usersTable": "SemanticUsers-dev-richard",
+      "workflowsTable": "SemanticWorkflows-dev-richard",
+      "workspacesTable": "SemanticWorkspaces-dev-richard"
+    },
+    "LambdaFunctions": {
+      "router": "semantic-slack-bot-dev-richard-router",
+      "bugAnalyze": "semantic-slack-bot-dev-richard-bugAnalyze",
+      "bugQuestions": "semantic-slack-bot-dev-richard-bugQuestions",
+      "calendarQuery": "semantic-slack-bot-dev-richard-calendarQuery"
+    }
+  }
+}

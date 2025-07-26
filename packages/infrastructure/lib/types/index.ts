@@ -15,6 +15,8 @@ export interface LambdaFunctions {
   bugResponseHandler: lambda.Function;
   calendarCheckAvailability: lambda.Function;
   calendarScheduleMeeting: lambda.Function;
+  calendarQuery: lambda.Function;
+  authGoogleCallback: lambda.Function;
   slackNotify: lambda.Function;
 }
 

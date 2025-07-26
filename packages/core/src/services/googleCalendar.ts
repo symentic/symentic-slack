@@ -1,6 +1,8 @@
 import { google } from 'googleapis';
 import { OAuth2Client, Credentials } from 'google-auth-library';
 import { dynamoDBService } from './dynamodb';
+import { fromZonedTime, toZonedTime } from 'date-fns-tz';
+import { startOfDay, endOfDay } from 'date-fns';
 
 export class GoogleCalendarService {
   private oauth2Client: OAuth2Client;
@@ -21,6 +23,7 @@ export class GoogleCalendarService {
 
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
+      prompt: 'consent', // Force re-consent to get refresh token
       scope: scopes,
       state: userId, // Pass userId in state for later retrieval
     });
@@ -37,13 +40,32 @@ export class GoogleCalendarService {
       throw new Error('No calendar tokens found for user');
     }
 
+    // Check if we have a refresh token
+    if (!tokens.refresh_token) {
+      console.error('No refresh token found for user:', userId);
+      throw new Error('Calendar authorization expired. Please reconnect your Google Calendar.');
+    }
+
     this.oauth2Client.setCredentials(tokens as Credentials);
     
-    // Refresh token if needed
-    if (tokens.expiry_date && (tokens.expiry_date as number) <= Date.now()) {
-      const { credentials } = await this.oauth2Client.refreshAccessToken();
-      await dynamoDBService.saveCalendarToken(userId, credentials as Record<string, unknown>);
-      this.oauth2Client.setCredentials(credentials);
+    // Refresh token if needed (check if expires within 5 minutes)
+    const expiryBuffer = 5 * 60 * 1000; // 5 minutes
+    if (tokens.expiry_date && (tokens.expiry_date as number) <= (Date.now() + expiryBuffer)) {
+      console.log('Access token expired or expiring soon, refreshing...');
+      try {
+        const { credentials } = await this.oauth2Client.refreshAccessToken();
+        // Merge with existing tokens to preserve refresh_token if not returned
+        const updatedTokens = {
+          ...tokens,
+          ...credentials,
+          refresh_token: credentials.refresh_token || tokens.refresh_token
+        };
+        await dynamoDBService.saveCalendarToken(userId, updatedTokens as Record<string, unknown>);
+        this.oauth2Client.setCredentials(updatedTokens as Credentials);
+      } catch (refreshError) {
+        console.error('Failed to refresh access token:', refreshError);
+        throw new Error('Calendar authorization expired. Please reconnect your Google Calendar.');
+      }
     }
 
     return google.calendar({ version: 'v3', auth: this.oauth2Client });
@@ -326,25 +348,39 @@ export class GoogleCalendarService {
 
   // Get events for a specific date
   async getEvents(
-    userEmail: string,
-    date: string = 'today'
+    userId: string,
+    date: string = 'today',
+    userTimezone: string = 'America/Los_Angeles'
   ): Promise<Array<{
     time: string;
     title: string;
     attendees?: string;
   }>> {
     try {
-      const calendar = await this.getCalendarClient(userEmail);
+      const calendar = await this.getCalendarClient(userId);
       
-      // Parse date
+      // Parse date in user's timezone
       let startDate: Date;
       let endDate: Date;
       
       if (date === 'today') {
-        startDate = new Date();
-        startDate.setHours(0, 0, 0, 0);
-        endDate = new Date();
-        endDate.setHours(23, 59, 59, 999);
+        // Get current time in user's timezone
+        const now = new Date();
+        const nowInUserTz = toZonedTime(now, userTimezone);
+        
+        // Get start and end of day in user's timezone
+        const startOfDayInUserTz = startOfDay(nowInUserTz);
+        const endOfDayInUserTz = endOfDay(nowInUserTz);
+        
+        // Convert to UTC for API call
+        startDate = fromZonedTime(startOfDayInUserTz, userTimezone);
+        endDate = fromZonedTime(endOfDayInUserTz, userTimezone);
+        
+        console.log(`User timezone: ${userTimezone}`);
+        console.log(`Current time in user TZ: ${nowInUserTz.toISOString()}`);
+        console.log(`Start of day in user TZ: ${startOfDayInUserTz.toISOString()}`);
+        console.log(`Start date (UTC): ${startDate.toISOString()}`);
+        console.log(`End date (UTC): ${endDate.toISOString()}`);
       } else {
         startDate = new Date(date);
         startDate.setHours(0, 0, 0, 0);
@@ -358,25 +394,68 @@ export class GoogleCalendarService {
         timeMax: endDate.toISOString(),
         singleEvents: true,
         orderBy: 'startTime',
+        maxResults: 50, // Ensure we get enough events
       });
 
       const events = response.data.items || [];
       
-      return events.map(event => ({
-        time: event.start?.dateTime 
-          ? new Date(event.start.dateTime).toLocaleTimeString('en-US', {
+      console.log(`Calendar API Request: timeMin=${startDate.toISOString()}, timeMax=${endDate.toISOString()}`);
+      console.log(`Found ${events.length} events for date range`);
+      events.forEach((event, index) => {
+        console.log(`Event ${index + 1}: ${event.summary} at ${event.start?.dateTime || event.start?.date}`);
+      });
+      
+      return events.map(event => {
+        let timeString = 'All day';
+        
+        if (event.start?.dateTime) {
+          const eventDate = new Date(event.start.dateTime);
+          const endDate = event.end?.dateTime ? new Date(event.end.dateTime) : null;
+          
+          // Format time in user's timezone
+          const startTime = eventDate.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZone: userTimezone
+          });
+          
+          if (endDate) {
+            const endTime = endDate.toLocaleTimeString('en-US', {
               hour: 'numeric',
-              minute: '2-digit'
-            })
-          : 'All day',
-        title: event.summary || 'No title',
-        attendees: event.attendees
-          ?.map(a => a.email)
-          .filter(e => e !== userEmail)
-          .join(', ')
-      }));
+              minute: '2-digit',
+              timeZone: userTimezone
+            });
+            timeString = `${startTime} - ${endTime}`;
+          } else {
+            timeString = startTime;
+          }
+          
+          // Add timezone abbreviation
+          const tzAbbr = eventDate.toLocaleTimeString('en-US', {
+            timeZoneName: 'short',
+            timeZone: userTimezone
+          }).split(' ').pop();
+          timeString += ` ${tzAbbr}`;
+        }
+        
+        return {
+          time: timeString,
+          title: event.summary || 'No title',
+          attendees: event.attendees
+            ?.map(a => a.email || a.displayName || 'Unknown')
+            .join(', ')
+        };
+      });
     } catch (error) {
-      console.error(`Failed to get events for ${userEmail}:`, error);
+      console.error(`Failed to get events for ${userId}:`, error);
+      // Re-throw authorization errors so they can be handled properly
+      if (error instanceof Error && 
+          (error.message.includes('authorization') || 
+           error.message.includes('token') ||
+           error.message.includes('expired'))) {
+        throw error;
+      }
+      // For other errors, return empty array
       return [];
     }
   }
