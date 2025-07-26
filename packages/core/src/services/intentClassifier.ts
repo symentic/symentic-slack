@@ -22,9 +22,9 @@ export class IntentClassifier {
     ];
 
 
-    // Use GPT-3.5 for simple, clear commands
+    // Use GPT-4o-mini for simple, clear commands
     if (simplePatterns.some(pattern => pattern.test(message))) {
-      return 'gpt-3.5-turbo';
+      return 'gpt-4o-mini';
     }
 
     // Check for emergency/critical indicators
@@ -39,11 +39,11 @@ export class IntentClassifier {
       return 'gpt-4o';
     }
 
-    // For complex but non-emergency messages, still use gpt-3.5-turbo for cost efficiency
+    // For complex but non-emergency messages, use gpt-4o-mini
     // The specific agents (like bug triage) will use their own model preferences
 
-    // Default to GPT-3.5 for cost efficiency
-    return 'gpt-3.5-turbo';
+    // Default to GPT-4o-mini (10 million free tokens per day)
+    return 'gpt-4o-mini';
   }
 
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
@@ -154,7 +154,7 @@ ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bu
   async batchClassify(messages: ClassificationOptions[]): Promise<IntentResult[]> {
     // For simple messages, batch them to GPT-3.5
     // For complex ones, process individually with GPT-4
-    const simpleMessages = messages.filter(m => this.selectModel(m.message) === 'gpt-3.5-turbo');
+    const simpleMessages = messages.filter(m => this.selectModel(m.message) === 'gpt-4o-mini');
     const complexMessages = messages.filter(m => ['gpt-4o-mini', 'gpt-4o'].includes(this.selectModel(m.message)));
 
     const results: IntentResult[] = [];

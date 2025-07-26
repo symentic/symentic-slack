@@ -44,7 +44,7 @@ export class ExecutionTracker {
   private tableName: string;
 
   constructor() {
-    this.tableName = process.env.EXECUTIONS_TABLE || 'SemanticExecutions';
+    this.tableName = process.env.EXECUTIONS_TABLE || 'SymenticExecutions';
   }
 
   async createExecution(params: {

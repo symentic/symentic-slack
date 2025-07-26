@@ -22,12 +22,12 @@ export class ElastiCacheRedisConstruct extends Construct {
     const subnetGroup = new elasticache.CfnSubnetGroup(this, 'RedisSubnetGroup', {
       description: 'Subnet group for Redis cluster',
       subnetIds: vpc.privateSubnets.map(subnet => subnet.subnetId),
-      cacheSubnetGroupName: `semantic-redis-subnet-group-${stage}`,
+              cacheSubnetGroupName: `symentic-redis-subnet-group-${stage}`,
     });
 
     // Create Redis replication group for high availability
     const replicationGroup = new elasticache.CfnReplicationGroup(this, 'RedisReplicationGroup', {
-      replicationGroupId: `semantic-redis-${stage}`,
+              replicationGroupId: `symentic-redis-${stage}`,
       replicationGroupDescription: 'Redis cluster for Symentic Slack Bot',
       engine: 'redis',
       cacheNodeType: 'cache.t3.micro', // Free tier eligible
@@ -42,7 +42,7 @@ export class ElastiCacheRedisConstruct extends Construct {
       snapshotRetentionLimit: 1, // Keep 1 day of backups
       snapshotWindow: '03:00-04:00',
       tags: [
-        { key: 'Name', value: `semantic-redis-${stage}` },
+        { key: 'Name', value: `symentic-redis-${stage}` },
         { key: 'Stage', value: stage },
       ],
     });

@@ -45,7 +45,7 @@ app.event('app_installed', async ({ event, client }) => {
     // Invoke the sync Lambda directly
     const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
     const invokeCommand = new InvokeCommand({
-      FunctionName: `semantic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
+      FunctionName: `symentic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
       InvocationType: 'Event', // Async invocation
       Payload: JSON.stringify({
         businessId,
@@ -408,7 +408,7 @@ app.command('/sync-workspace', async ({ command, ack, say, client }) => {
     // Invoke the sync Lambda directly
     const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
     const invokeCommand = new InvokeCommand({
-      FunctionName: `semantic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
+      FunctionName: `symentic-slack-bot-${process.env.STAGE}-profileSyncWorkspace`,
       InvocationType: 'Event', // Async invocation
       Payload: JSON.stringify({
         businessId,

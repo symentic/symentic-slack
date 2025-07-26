@@ -65,7 +65,7 @@ async function getActiveWorkflow(
   try {
     // Query DynamoDB for active workflows
     const params = {
-      TableName: process.env.WORKFLOWS_TABLE || 'SemanticWorkflows',
+      TableName: process.env.WORKFLOWS_TABLE || 'SymenticWorkflows',
       Key: {
         threadId: `${userId}:${threadTs}`
       }
@@ -160,7 +160,7 @@ export async function storeWorkflowReference(
   taskToken?: string
 ): Promise<void> {
   const params = {
-    TableName: process.env.WORKFLOWS_TABLE || 'SemanticWorkflows',
+    TableName: process.env.WORKFLOWS_TABLE || 'SymenticWorkflows',
     Item: {
       threadId: `${userId}:${threadTs}`,
       userId,

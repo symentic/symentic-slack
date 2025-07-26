@@ -59,7 +59,7 @@ export class LambdaFunctionsConstruct extends Construct {
     const functions: Record<string, lambda.Function> = {};
     functionDefinitions.forEach(def => {
       const functionProps: lambdaNodejs.NodejsFunctionProps = {
-        functionName: `semantic-slack-bot-${stage}-${def.name}`,
+        functionName: `symentic-slack-bot-${stage}-${def.name}`,
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: def.handler,
         entry: path.join(__dirname, '../../../lambdas', def.entry),

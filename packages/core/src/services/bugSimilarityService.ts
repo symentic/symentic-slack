@@ -24,11 +24,11 @@ export class BugSimilarityService {
       region: process.env.AWS_REGION || 'us-east-1'
     });
     this.docClient = DynamoDBDocumentClient.from(client);
-    this.tableName = process.env.BUG_REPORTS_TABLE || 'SemanticBugReports';
+    this.tableName = process.env.BUG_REPORTS_TABLE || 'SymenticBugReports';
   }
 
   /**
-   * Find similar bugs using exact match and semantic similarity
+   * Find similar bugs using exact match and symentic similarity
    */
   async findSimilarBugs(
     workspaceId: string, 
@@ -46,7 +46,7 @@ export class BugSimilarityService {
       }];
     }
 
-    // 2. Find semantically similar bugs
+    // 2. Find symenticly similar bugs
     const recentBugs = await this.getRecentBugs(workspaceId, category);
     if (recentBugs.length === 0) {
       return [];
@@ -157,7 +157,7 @@ export class BugSimilarityService {
   }
 
   /**
-   * Use GPT to analyze semantic similarity between bugs
+   * Use GPT to analyze symentic similarity between bugs
    */
   private async analyzeSimilarity(
     newDescription: string,

@@ -102,7 +102,7 @@ npm run deploy:dev
 1. **Check who deployed last:**
    ```bash
    aws cloudformation describe-stacks \
-     --stack-name semantic-slack-bot-v2-prod \
+     --stack-name symentic-slack-bot-v2-prod \
      --query 'Stacks[0].LastUpdatedTime' \
      --output text
    ```

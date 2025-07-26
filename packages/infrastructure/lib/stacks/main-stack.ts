@@ -2,8 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import { Construct } from 'constructs';
-import * as path from 'path';
-import * as fs from 'fs';
 import { DynamoDBTablesConstruct } from '../constructs/dynamodb-tables';
 import { LambdaFunctionsConstruct } from '../constructs/lambda-functions';
 import { VpcConstruct } from '../constructs/vpc';
@@ -113,7 +111,7 @@ export class MainStack extends cdk.Stack {
 
   private createApiGateway(): void {
     const api = new apigateway.RestApi(this, 'SlackBotApi', {
-      restApiName: `semantic-slack-bot-${this.stage}`,
+              restApiName: `symentic-slack-bot-${this.stage}`,
       deployOptions: {
         stageName: this.stage,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,

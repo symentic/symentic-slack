@@ -18,7 +18,7 @@ export class VpcConstruct extends Construct {
 
     // Create VPC with public and private subnets
     this.vpc = new ec2.Vpc(this, 'Vpc', {
-      vpcName: `semantic-vpc-${stage}`,
+      vpcName: `symentic-vpc-${stage}`,
       maxAzs: 2, // For high availability
       natGateways: 1, // Single NAT gateway for cost optimization
       subnetConfiguration: [
@@ -38,7 +38,7 @@ export class VpcConstruct extends Construct {
     // Create security group for Lambda functions
     this.lambdaSecurityGroup = new ec2.SecurityGroup(this, 'LambdaSecurityGroup', {
       vpc: this.vpc,
-      securityGroupName: `semantic-lambda-sg-${stage}`,
+              securityGroupName: `symentic-lambda-sg-${stage}`,
       description: 'Security group for Lambda functions',
       allowAllOutbound: true,
     });
@@ -46,7 +46,7 @@ export class VpcConstruct extends Construct {
     // Create security group for Redis
     this.redisSecurityGroup = new ec2.SecurityGroup(this, 'RedisSecurityGroup', {
       vpc: this.vpc,
-      securityGroupName: `semantic-redis-sg-${stage}`,
+              securityGroupName: `symentic-redis-sg-${stage}`,
       description: 'Security group for ElastiCache Redis',
       allowAllOutbound: false, // Redis doesn't need outbound
     });
@@ -59,7 +59,7 @@ export class VpcConstruct extends Construct {
     );
 
     // Add tags
-    cdk.Tags.of(this.vpc).add('Name', `semantic-vpc-${stage}`);
+    cdk.Tags.of(this.vpc).add('Name', `symentic-vpc-${stage}`);
     cdk.Tags.of(this.vpc).add('Stage', stage);
   }
 }

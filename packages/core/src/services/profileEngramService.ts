@@ -29,7 +29,7 @@ export class ProfileEngramService {
       region: process.env.AWS_REGION || 'us-east-1'
     });
     this.docClient = DynamoDBDocumentClient.from(client);
-    this.tableName = process.env.PROFILE_ENGRAMS_TABLE || 'SemanticProfileEngrams';
+    this.tableName = process.env.PROFILE_ENGRAMS_TABLE || 'SymenticProfileEngrams';
   }
 
   /**
@@ -389,7 +389,7 @@ Return your response as JSON with a "description" field.`;
       const response = await openAIService.classifyWithModel(
         'You are a professional profile writer. Generate concise descriptions. Always return valid JSON.',
         prompt,
-        'gpt-3.5-turbo'
+        'gpt-4o-mini'
       );
 
       return JSON.parse(response).description || 'Team member';

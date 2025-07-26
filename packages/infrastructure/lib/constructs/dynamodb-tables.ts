@@ -31,7 +31,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createUsersTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'UsersTable', {
-      tableName: `SemanticUsers-${stage}`,
+      tableName: `SymenticUsers-${stage}`,
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -41,7 +41,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createWorkspacesTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'WorkspacesTable', {
-      tableName: `SemanticWorkspaces-${stage}`,
+      tableName: `SymenticWorkspaces-${stage}`,
       partitionKey: { name: 'workspaceId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -51,7 +51,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createEngramsTable(stage: string): dynamodb.Table {
     const table = new dynamodb.Table(this, 'EngramsTable', {
-      tableName: `SemanticEngrams-${stage}`,
+      tableName: `SymenticEngrams-${stage}`,
       partitionKey: { name: 'engramId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -70,7 +70,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createBugReportsTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'BugReportsTable', {
-      tableName: `SemanticBugReports-${stage}`,
+      tableName: `SymenticBugReports-${stage}`,
       partitionKey: { name: 'bugId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -80,7 +80,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createCalendarTokensTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'CalendarTokensTable', {
-      tableName: `SemanticCalendarTokens-${stage}`,
+      tableName: `SymenticCalendarTokens-${stage}`,
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -90,7 +90,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createMeetingsTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'MeetingsTable', {
-      tableName: `SemanticMeetings-${stage}`,
+      tableName: `SymenticMeetings-${stage}`,
       partitionKey: { name: 'meetingId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: cdk.RemovalPolicy.RETAIN,
@@ -100,7 +100,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createAreaExpertiseTable(stage: string): dynamodb.Table {
     const table = new dynamodb.Table(this, 'AreaExpertiseTable', {
-      tableName: `SemanticAreaExpertise-${stage}`,
+      tableName: `SymenticAreaExpertise-${stage}`,
       partitionKey: { name: 'userId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'area', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
@@ -120,7 +120,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createWorkflowsTable(stage: string): dynamodb.Table {
     return new dynamodb.Table(this, 'WorkflowsTable', {
-      tableName: `SemanticWorkflows-${stage}`,
+      tableName: `SymenticWorkflows-${stage}`,
       partitionKey: { name: 'threadId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
@@ -131,7 +131,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createExecutionsTable(stage: string): dynamodb.Table {
     const table = new dynamodb.Table(this, 'ExecutionsTable', {
-      tableName: `SemanticExecutions-${stage}`,
+      tableName: `SymenticExecutions-${stage}`,
       partitionKey: { name: 'executionId', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
@@ -158,7 +158,7 @@ export class DynamoDBTablesConstruct extends Construct {
 
   private createProfileEngramsTable(stage: string): dynamodb.Table {
     const table = new dynamodb.Table(this, 'ProfileEngramsTable', {
-      tableName: `SemanticProfileEngrams-${stage}`,
+      tableName: `SymenticProfileEngrams-${stage}`,
       partitionKey: { name: 'PK', type: dynamodb.AttributeType.STRING }, // BUSINESS#businessId
       sortKey: { name: 'SK', type: dynamodb.AttributeType.STRING }, // USER#userId or INTERACTION#timestamp#userId
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,

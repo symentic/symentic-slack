@@ -10,7 +10,7 @@ export class BugCounterService {
       region: process.env.AWS_REGION || 'us-east-1'
     });
     this.docClient = DynamoDBDocumentClient.from(client);
-    this.tableName = process.env.WORKSPACES_TABLE || 'SemanticWorkspaces';
+    this.tableName = process.env.WORKSPACES_TABLE || 'SymenticWorkspaces';
   }
 
   /**

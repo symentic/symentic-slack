@@ -13,7 +13,7 @@ export class OpenAIService {
   async classifyWithModel(
     systemPrompt: string,
     userPrompt: string,
-    model: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o' = 'gpt-3.5-turbo'
+    model: 'gpt-3.5-turbo' | 'gpt-4o-mini' | 'gpt-4o' = 'gpt-4o-mini'
   ): Promise<string> {
     try {
       const completion = await this.openai.chat.completions.create({
@@ -287,7 +287,7 @@ Respond in JSON format with the following structure:
 }`;
   
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: message },
@@ -332,7 +332,7 @@ Respond in JSON format with:
 }`;
 
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: description },
@@ -374,7 +374,7 @@ Respond in JSON format:
 }`;
 
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: JSON.stringify(bugData) },
@@ -424,7 +424,7 @@ Respond in JSON format with this structure:
 }`;
   
     const completion = await this.openai.chat.completions.create({
-      model: 'gpt-3.5-turbo',
+      model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: `Response: ${response}\nContext: ${JSON.stringify(bugContext)}` },

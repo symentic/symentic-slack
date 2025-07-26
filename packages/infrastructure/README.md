@@ -112,15 +112,15 @@ After deployment, important values will be output:
 
 All tables use on-demand billing mode:
 
-- **SemanticUsers**: User profiles and preferences
-- **SemanticWorkspaces**: Workspace configurations
-- **SemanticEngrams**: Long-term memory storage (with GSI)
-- **SemanticBugReports**: Bug report data
-- **SemanticCalendarTokens**: OAuth tokens for calendar
-- **SemanticMeetings**: Meeting records
-- **SemanticAreaExpertise**: Engineer expertise mapping (with GSI)
-- **SemanticWorkflows**: Active workflow tracking (with TTL)
-- **SemanticExecutions**: Execution tracking (with TTL and 2 GSIs)
+- **SymenticUsers**: User profiles and preferences
+- **SymenticWorkspaces**: Workspace configurations
+- **SymenticEngrams**: Long-term memory storage (with GSI)
+- **SymenticBugReports**: Bug report data
+- **SymenticCalendarTokens**: OAuth tokens for calendar
+- **SymenticMeetings**: Meeting records
+- **SymenticAreaExpertise**: Engineer expertise mapping (with GSI)
+- **SymenticWorkflows**: Active workflow tracking (with TTL)
+- **SymenticExecutions**: Execution tracking (with TTL and 2 GSIs)
 
 ### Step Functions
 
