@@ -58,7 +58,13 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
       try {
         const hasToken = await dynamoDBService.getCalendarToken(userId);
         if (hasToken) {
-          engineersWithCalendar.push(userId);
+          // Check if token has refresh_token
+          if (!hasToken.refresh_token) {
+            console.log(`User ${userId} has token but no refresh_token - treating as disconnected`);
+            engineersWithoutCalendar.push(userId);
+          } else {
+            engineersWithCalendar.push(userId);
+          }
         } else {
           engineersWithoutCalendar.push(userId);
         }
@@ -70,6 +76,19 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     
     console.log('Engineers with calendar:', engineersWithCalendar);
     console.log('Engineers without calendar:', engineersWithoutCalendar);
+    
+    // Debug: Show calendar tokens status
+    for (const userId of engineerUserIds) {
+      try {
+        const token = await dynamoDBService.getCalendarToken(userId);
+        console.log(`User ${userId} calendar token exists:`, !!token);
+        if (token) {
+          console.log(`Token expires at:`, token.expiry_date);
+        }
+      } catch (e) {
+        console.log(`User ${userId} - error checking token:`, e);
+      }
+    }
     
     // If no engineers have calendar connected, return default slots with auth URL
     if (engineersWithCalendar.length === 0) {
@@ -120,6 +139,16 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     // Take top 5 slots
     const topSlots = availableSlots.slice(0, 5);
     
+    // If no slots found from calendar, fall back to default slots
+    if (topSlots.length === 0) {
+      console.log('No calendar slots found, using default slots');
+      const defaultResult = getDefaultSlots(engineerUserIds, urgency === 'high' ? 'high' : 'medium');
+      return {
+        ...defaultResult,
+        engineersWithoutCalendar: engineersWithoutCalendar.length > 0 ? engineersWithoutCalendar : undefined
+      };
+    }
+    
     return {
       slots: topSlots,
       suggestedTime: topSlots[0]?.start,
@@ -133,20 +162,36 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
 
 // Generate default slots when calendar is not available
 function getDefaultSlots(engineerUserIds: string[], urgency: string): AvailabilityResult {
-  const now = new Date();
+  console.log('Generating default slots for urgency:', urgency);
   const slots: SlotWithEngineers[] = [];
   
-  // Start from next business hour
+  // Get current time
+  const now = new Date();
+  console.log('Current UTC time:', now.toISOString());
+  
+  // Convert to EST/EDT for hour checking
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    hour12: false
+  });
+  const currentHourEST = parseInt(formatter.format(now));
+  console.log('Current hour in EST:', currentHourEST);
+  
+  // Create start time - we need to work in UTC but think in EST
   const startTime = new Date(now);
-  if (startTime.getHours() >= 17) {
-    // After 5 PM, start from next day 9 AM
-    startTime.setDate(startTime.getDate() + 1);
-    startTime.setHours(9, 0, 0, 0);
-  } else if (startTime.getHours() < 9) {
-    // Before 9 AM, start from 9 AM
-    startTime.setHours(9, 0, 0, 0);
+  
+  // Calculate hours to add to get to next business hour in EST
+  if (currentHourEST >= 17) {
+    // After 5 PM EST, start from next day 8 AM EST
+    const hoursUntilNextDay8AM = (24 - currentHourEST) + 8;
+    startTime.setHours(startTime.getHours() + hoursUntilNextDay8AM, 0, 0, 0);
+  } else if (currentHourEST < 8) {
+    // Before 8 AM EST, start from 8 AM EST today
+    const hoursUntil8AM = 8 - currentHourEST;
+    startTime.setHours(startTime.getHours() + hoursUntil8AM, 0, 0, 0);
   } else {
-    // Round to next 30-minute slot
+    // During business hours, round to next 30-minute slot
     startTime.setMinutes(Math.ceil(startTime.getMinutes() / 30) * 30, 0, 0);
   }
   
@@ -168,15 +213,35 @@ function getDefaultSlots(engineerUserIds: string[], urgency: string): Availabili
       continue;
     }
     
-    // Skip non-business hours
-    if (currentTime.getHours() >= 17) {
-      currentTime.setDate(currentTime.getDate() + 1);
-      currentTime.setHours(9, 0, 0, 0);
-      continue;
-    }
-    
     const endTime = new Date(currentTime);
     endTime.setMinutes(endTime.getMinutes() + slotDuration);
+    
+    // Skip non-business hours (must be between 8 AM - 5 PM EST)
+    const hourFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      hour12: false
+    });
+    const currentTimeHourEST = parseInt(hourFormatter.format(currentTime));
+    const endTimeHourEST = parseInt(hourFormatter.format(endTime));
+    
+    if (currentTimeHourEST >= 17 || currentTimeHourEST < 8 || endTimeHourEST > 17) {
+      // Move to next day 8 AM EST
+      currentTime.setDate(currentTime.getDate() + 1);
+      // Set to 8 AM in the user's local time, adjusted for EST
+      const tomorrow8AMEST = new Date(currentTime);
+      tomorrow8AMEST.setHours(8, 0, 0, 0);
+      // Get the UTC offset difference
+      const tomorrowFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        hour: 'numeric',
+        hour12: false
+      });
+      const tomorrow8AMESTHour = parseInt(tomorrowFormatter.format(tomorrow8AMEST));
+      const hourDiff = 8 - tomorrow8AMESTHour;
+      currentTime.setHours(currentTime.getHours() + hourDiff, 0, 0, 0);
+      continue;
+    }
     
     slots.push({
       start: currentTime.toISOString(),
@@ -187,6 +252,11 @@ function getDefaultSlots(engineerUserIds: string[], urgency: string): Availabili
     // Move to next slot
     currentTime = new Date(endTime);
     currentTime.setMinutes(currentTime.getMinutes() + 30); // 30-minute gaps
+  }
+  
+  console.log(`Generated ${slots.length} default slots`);
+  if (slots.length > 0) {
+    console.log('First slot:', slots[0]);
   }
   
   return {

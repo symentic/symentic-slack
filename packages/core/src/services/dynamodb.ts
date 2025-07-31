@@ -162,6 +162,8 @@ export class DynamoDBService {
 
   // Google Calendar OAuth token management
   async saveCalendarToken(userId: string, tokens: Record<string, unknown>): Promise<void> {
+    console.log(`Saving calendar tokens for user ${userId}:`, JSON.stringify(tokens, null, 2));
+    
     const params = {
       TableName: process.env.CALENDAR_TOKENS_TABLE || 'SymenticCalendarTokens',
       Item: {
@@ -172,6 +174,7 @@ export class DynamoDBService {
     };
 
     await this.docClient.send(new PutCommand(params));
+    console.log(`Calendar tokens saved to DynamoDB for user ${userId}`);
   }
 
   async deleteCalendarToken(userId: string): Promise<void> {

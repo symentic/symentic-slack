@@ -47,13 +47,13 @@ export class LambdaFunctionsConstruct extends Construct {
       { name: 'bugFindEngineers', entry: 'src/bug-triage/find-engineers.ts', handler: 'handler' },
       { name: 'bugCreateChannel', entry: 'src/bug-triage/create-channel.ts', handler: 'handler' },
       { name: 'bugSave', entry: 'src/bug-triage/save-bug.ts', handler: 'handler' },
-      { name: 'bugTrackExecution', entry: 'src/bug-triage/track-execution.ts', handler: 'handler' },
       { name: 'bugResponseHandler', entry: 'src/bug-triage/response-handler.ts', handler: 'handler' },
       { name: 'calendarCheckAvailability', entry: 'src/calendar/check-availability.ts', handler: 'handler' },
       { name: 'calendarScheduleMeeting', entry: 'src/calendar/schedule-meeting.ts', handler: 'handler' },
       { name: 'bugTriageCheckAvailability', entry: 'src/calendar/bug-triage-check-availability.ts', handler: 'handler' },
       { name: 'bugTriageScheduleMeeting', entry: 'src/calendar/bug-triage-schedule-meeting.ts', handler: 'handler' },
-      { name: 'calendarOauthCallback', entry: 'src/calendar/oauth-callback.ts', handler: 'handler' },
+      // OAuth callback is now handled in the router Lambda
+      // { name: 'calendarOauthCallback', entry: 'src/calendar/oauth-callback.ts', handler: 'handler' },
       { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler' },
       { name: 'profileSyncWorkspace', entry: 'src/profile-engram/sync-workspace.ts', handler: 'handler', memory: 512 },
     ];

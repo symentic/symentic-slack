@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with the Symentic Slack Bot codebase.
 
+## Important Guidelines
+
+### File Management and Duplicate Prevention
+**CRITICAL**: Always check if a file exists before creating a new one. Never create duplicate files with suffixes like " 2", " copy", or similar patterns.
+
+1. **Before creating any file**:
+   - Use the `Read` or `LS` tool to check if the file already exists
+   - If it exists, use `Edit` or `MultiEdit` to modify it instead
+   - Never create files with names like "filename 2.ts" or "filename copy.js"
+
+2. **When modifying files**:
+   - Always use `Edit` or `MultiEdit` on existing files
+   - Never create a duplicate and edit that instead
+   - If you get a file not found error, double-check the path and filename
+
+3. **CDK output files**:
+   - CDK generates files in `cdk.out/` directory - these are build artifacts
+   - Never manually create or duplicate CDK output files
+   - If you see duplicates like "manifest 2.json", they should be removed
+
+4. **Best practices**:
+   - Always prefer updating existing files over creating new ones
+   - Use exact file paths without spaces or special characters when possible
+   - If a file needs significant changes, modify it in place rather than creating a new version
+
 ## Project Overview
 
 The Symentic Slack Bot is a production-ready Node.js application that serves as the master AI agent for the Symentic platform. It's designed as an intelligent Slack bot that observes workspace activity, manages child agents, maintains memory across short and long-term storage, and provides automated workflows like bug triage with integrated calendar scheduling.

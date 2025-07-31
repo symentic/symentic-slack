@@ -53,20 +53,24 @@ export class IntentClassifier {
     const bugPatterns = [
       /\b(error|errors)\s+(with|in)\s+\w+/i,
       /\b(payment|login|system|feature|api|server)\s+(error|issue|problem|bug)/i,
-      /\b(error|issue|problem|bug)\s+(with|in)\s+(payment|login|system|feature|api|server)/i,
+      /\b(error|issue|problem|bug)\s+(with|in)\s+(the\s+)?(payment|login|system|feature|api|server)/i,
       /\b(not\s+working|broken|crashed|down|failed|failing)\b/i,
       /\b(bug:|issue:|error:|problem:)/i,
       /\bcannot\s+(login|pay|access|connect)/i,
       /\bunable\s+to\s+(login|pay|access|connect)/i,
       // More flexible patterns for typos and variations
       /\berror\s+with.{0,10}(payment|system|login|api)/i,
-      /\b(there\s+is|there's)\s+(an?\s+)?(error|issue|problem|bug)/i,
+      /\b(there\s+is|there's|theres)\s+(an?\s+)?(error|issue|problem|bug)/i,
       /\b(payment|system|login|api).{0,10}(error|issue|problem|not\s+work)/i,
       // Ultra-flexible patterns for common typos
       /error.*payment/i,
       /payment.*error/i,
       /error.*system/i,
-      /system.*error/i
+      /system.*error/i,
+      // New patterns for "bug with/in [system]"
+      /\bbug\s+(with|in)\s+(the\s+)?(payment|login|system|feature|api|server)/i,
+      /\b(payment|login|system|feature|api|server).*bug/i,
+      /\bbug.*\b(payment|login|system|feature|api|server)/i
     ];
     
     const lowerMessage = message.toLowerCase();

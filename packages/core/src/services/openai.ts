@@ -76,7 +76,7 @@ export class OpenAIService {
 1. Rate completeness from 0-100 (100 = has all necessary info to start fixing)
 2. Rate quality from 1-10 (10 = crystal clear, actionable)
 3. List specific missing information
-4. Generate 2-3 contextual follow-up questions (not generic)
+4. Generate 2-3 contextual follow-up questions (not generic) - IMPORTANT: Address the user directly using "you/your"
 5. Categorize the bug type if possible
 6. Rate your confidence in understanding the issue (0-1)
 7. Determine severity level based on impact and urgency
@@ -103,7 +103,7 @@ IMPORTANT: Respond with valid JSON in this exact format:
   "completenessScore": <number 0-100>,
   "qualityRating": <number 1-10>,
   "missingInformation": ["item1", "item2"],
-  "followUpQuestions": ["question1", "question2"],
+  "followUpQuestions": ["question1 addressing user directly", "question2 using you/your"],
   "confidence": <number 0-1>,
   "category": "UI|Backend|Performance|Security|Other",
   "severity": "critical|high|medium|low",
@@ -275,6 +275,8 @@ Category: ${bugData.category || 'General'}`;
 3. Make questions specific to the bug type and context
 4. Prioritize questions that will most help developers fix the issue
 5. Consider the user's technical level based on their responses
+6. IMPORTANT: Address the user directly using "you" and "your" (e.g., "What error messages do you see?" not "What error messages do users see?")
+7. Write questions as if speaking directly to the person reporting the bug
 
 Respond in JSON format with questions array, priority, and reasoning.`;
 

@@ -23,12 +23,22 @@ export class GoogleCalendarService {
       access_type: 'offline',
       scope: scopes,
       state: userId, // Pass userId in state for later retrieval
+      prompt: 'consent', // Force re-consent to ensure refresh token is returned
     });
   }
 
   async handleAuthCallback(code: string, userId: string): Promise<void> {
+    console.log(`Handling OAuth callback for user ${userId}`);
     const { tokens } = await this.oauth2Client.getToken(code);
+    console.log('Tokens received from Google:', JSON.stringify(tokens, null, 2));
+    
+    // Verify refresh token is present
+    if (!tokens.refresh_token) {
+      console.warn(`WARNING: No refresh_token received for user ${userId}. User may need to revoke app access and re-authorize.`);
+    }
+    
     await dynamoDBService.saveCalendarToken(userId, tokens as Record<string, unknown>);
+    console.log(`Calendar tokens saved for user ${userId}`);
   }
 
   async getCalendarClient(userId: string) {
@@ -41,6 +51,11 @@ export class GoogleCalendarService {
     
     // Refresh token if needed
     if (tokens.expiry_date && (tokens.expiry_date as number) <= Date.now()) {
+      console.log(`Token expired for user ${userId}, attempting refresh...`);
+      if (!tokens.refresh_token) {
+        console.error(`No refresh token available for user ${userId}. User needs to re-authenticate.`);
+        throw new Error('Calendar token expired and no refresh token available. Please reconnect your calendar.');
+      }
       const { credentials } = await this.oauth2Client.refreshAccessToken();
       await dynamoDBService.saveCalendarToken(userId, credentials as Record<string, unknown>);
       this.oauth2Client.setCredentials(credentials);
@@ -56,6 +71,8 @@ export class GoogleCalendarService {
     const timeMin = new Date();
     const timeMax = new Date();
     timeMax.setDate(timeMax.getDate() + daysAhead);
+    
+    console.log(`Finding free/busy time for ${userIds.length} users from ${timeMin.toISOString()} to ${timeMax.toISOString()}`);
 
     // Skip weekends
     const isWeekday = (date: Date) => {
@@ -69,6 +86,7 @@ export class GoogleCalendarService {
     for (const userId of userIds) {
       try {
         const calendar = await this.getCalendarClient(userId);
+        console.log(`Querying calendar for user ${userId}`);
         const response = await calendar.freebusy.query({
           requestBody: {
             timeMin: timeMin.toISOString(),
@@ -76,9 +94,12 @@ export class GoogleCalendarService {
             items: [{ id: 'primary' }],
           },
         });
+        console.log(`Calendar API response for ${userId}:`, JSON.stringify(response.data, null, 2));
 
         const busy = response.data.calendars?.primary?.busy || [];
+        console.log(`User ${userId} has ${busy.length} busy slots`);
         busy.forEach((slot) => {
+          console.log(`  Busy: ${slot.start} - ${slot.end}`);
           allBusyTimes.push({
             start: new Date(slot.start!),
             end: new Date(slot.end!),
@@ -86,17 +107,32 @@ export class GoogleCalendarService {
         });
       } catch (error) {
         console.error(`Failed to get calendar for user ${userId}:`, error);
+        console.error('Full error details:', JSON.stringify(error, null, 2));
       }
     }
 
     // Find free slots
     const freeSlots: { start: Date; end: Date }[] = [];
     const slotDuration = 30; // 30 minutes
-    const workStart = 9; // 9 AM
-    const workEnd = 17; // 5 PM
+    const workStart = 8; // 8 AM EST
+    const workEnd = 17; // 5 PM EST
 
+    // Start from current time but ensure it's within business hours
     const currentTime = new Date(timeMin);
-    currentTime.setHours(workStart, 0, 0, 0);
+    
+    // Convert to EST/EDT for business hours check
+    const estTime = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
+    const currentHourEST = estTime.getHours();
+    
+    // Adjust start time based on EST business hours
+    if (currentHourEST >= workEnd) {
+      // After 5 PM EST, start from next day 8 AM
+      currentTime.setDate(currentTime.getDate() + 1);
+      currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
+    } else if (currentHourEST < workStart) {
+      // Before 8 AM EST, start from 8 AM today
+      currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
+    }
 
     while (currentTime < timeMax) {
       if (!isWeekday(currentTime)) {
@@ -108,11 +144,15 @@ export class GoogleCalendarService {
       const slotEnd = new Date(currentTime);
       slotEnd.setMinutes(slotEnd.getMinutes() + slotDuration);
 
-      // Check if slot is within work hours
-      if (slotEnd.getHours() > workEnd || 
-          (slotEnd.getHours() === workEnd && slotEnd.getMinutes() > 0)) {
+      // Check if slot is within work hours (8 AM - 5 PM EST)
+      const slotStartEST = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
+      const slotEndEST = new Date(slotEnd.toLocaleString("en-US", {timeZone: "America/New_York"}));
+      
+      if (slotEndEST.getHours() > workEnd || 
+          (slotEndEST.getHours() === workEnd && slotEndEST.getMinutes() > 0) ||
+          slotStartEST.getHours() < workStart) {
         currentTime.setDate(currentTime.getDate() + 1);
-        currentTime.setHours(workStart, 0, 0, 0);
+        currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
         continue;
       }
 
@@ -122,6 +162,10 @@ export class GoogleCalendarService {
         (slotEnd > busy.start && slotEnd <= busy.end) ||
         (currentTime <= busy.start && slotEnd >= busy.end)
       );
+      
+      if (hasConflict && freeSlots.length < 5) {
+        console.log(`Slot ${currentTime.toISOString()} - ${slotEnd.toISOString()} has conflict`);
+      }
 
       if (!hasConflict) {
         freeSlots.push({
@@ -133,6 +177,7 @@ export class GoogleCalendarService {
       currentTime.setMinutes(currentTime.getMinutes() + 15); // Check every 15 minutes
     }
 
+    console.log(`Found ${freeSlots.length} free slots after checking ${allBusyTimes.length} busy times`);
     return freeSlots;
   }
 

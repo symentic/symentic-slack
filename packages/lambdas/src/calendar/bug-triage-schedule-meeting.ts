@@ -196,7 +196,7 @@ async function postMeetingConfirmationRequest(
           type: 'plain_text',
           text: 'Connect Calendar'
         },
-        url: calendarAuthUrl || '#',
+        url: calendarAuthUrl || 'https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/auth/google',
         action_id: 'connect_calendar'
       }
     });
@@ -227,7 +227,8 @@ async function postMeetingConfirmationRequest(
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
-      timeZone: 'America/New_York'
+      timeZone: 'America/New_York',
+      timeZoneName: 'short'
     });
     
     const availability = allAvailable 

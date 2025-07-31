@@ -133,15 +133,8 @@ export class MainStack extends cdk.Stack {
       new apigateway.LambdaIntegration(this.lambdaFunctions.router)
     );
     
-    // Create /auth/google/callback endpoint for OAuth
-    const authResource = api.root.addResource('auth');
-    const googleResource = authResource.addResource('google');
-    const callbackResource = googleResource.addResource('callback');
-    
-    callbackResource.addMethod(
-      'GET',
-      new apigateway.LambdaIntegration(this.lambdaFunctions.calendarOauthCallback)
-    );
+    // OAuth endpoint is created manually in API Gateway to avoid conflicts
+    // The /auth/google/callback route is already configured to use the router Lambda
 
     // Output API endpoint
     new cdk.CfnOutput(this, 'ApiEndpoint', {

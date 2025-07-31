@@ -91,10 +91,10 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
 
 function getDefaultQuestions(missingInfo: string[]): string[] {
   const defaultQuestions: Record<string, string> = {
-    'reproduction steps': 'What are the exact steps to reproduce this issue?',
+    'reproduction steps': 'What are the exact steps you take to reproduce this issue?',
     'environment': 'What browser, operating system, and device are you using?',
-    'impact': 'How many users are affected and how critical is this for your work?',
-    'frequency': 'How often does this issue occur? Is it consistent or intermittent?',
+    'impact': 'How is this affecting you and how critical is this for your work?',
+    'frequency': 'How often do you experience this issue? Is it consistent or intermittent?',
     'error messages': 'Are there any error messages or console logs you can share?'
   };
   
