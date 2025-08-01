@@ -58,6 +58,13 @@
         "description": "Disconnect your Google Calendar",
         "usage_hint": "[no parameters needed]",
         "should_escape": false
+      },
+      {
+        "command": "/calendar-status",
+        "url": "https://x9tw492kl2.execute-api.us-east-1.amazonaws.com/prod/slack/events",
+        "description": "Check your Google Calendar connection status",
+        "usage_hint": "[no parameters needed]",
+        "should_escape": false
       }
     ]
   },

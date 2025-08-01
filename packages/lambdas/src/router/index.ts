@@ -452,6 +452,228 @@ app.command('/refresh-profile', async ({ command, ack, say, client }) => {
   }
 });
 
+// Handle /calendar-status command
+app.command('/calendar-status', async ({ command, ack, say }) => {
+  await ack();
+  
+  const userId = command.user_id;
+  
+  try {
+    // Check if user has calendar token
+    const dynamoDBService = (await import('@symentic/core')).dynamoDBService;
+    let token: any = null;
+    let hasToken = false;
+    let hasRefreshToken = false;
+    
+    try {
+      token = await dynamoDBService.getCalendarToken(userId);
+      hasToken = true;
+      hasRefreshToken = !!token?.refresh_token;
+    } catch (error) {
+      console.log('No calendar token found for user:', userId);
+    }
+    
+    if (!hasToken) {
+      await say({
+        text: '📅 Calendar Status',
+        blocks: [
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: '*Calendar Status:* Not Connected ❌'
+            }
+          },
+          {
+            type: 'section',
+            text: {
+              type: 'mrkdwn',
+              text: 'To connect your Google Calendar, I\'ll need to send you an authorization link.'
+            }
+          },
+          {
+            type: 'divider'
+          },
+          {
+            type: 'context',
+            elements: [
+              {
+                type: 'mrkdwn',
+                text: 'Use the bug triage workflow to get a calendar connection link, or ask me to "connect my calendar".'
+              }
+            ]
+          }
+        ]
+      });
+      return;
+    }
+    
+    // Check token status
+    const isExpired = token?.expiry_date ? (token.expiry_date as number) < Date.now() : false;
+    const expiryDate = token?.expiry_date ? new Date(token.expiry_date as number) : null;
+    
+    // Try to fetch calendar events
+    let events: any[] = [];
+    let busySlots: any[] = [];
+    let calendarError = null;
+    
+    if (hasRefreshToken && !isExpired) {
+      try {
+        const calendar = await googleCalendarService.getCalendarClient(userId);
+        
+        // Get events for next 7 days
+        const now = new Date();
+        const nextWeek = new Date();
+        nextWeek.setDate(nextWeek.getDate() + 7);
+        
+        // Fetch calendar events
+        const eventsResponse = await calendar.events.list({
+          calendarId: 'primary',
+          timeMin: now.toISOString(),
+          timeMax: nextWeek.toISOString(),
+          singleEvents: true,
+          orderBy: 'startTime',
+          maxResults: 5
+        });
+        
+        events = eventsResponse.data.items?.map(event => ({
+          summary: event.summary || 'No title',
+          start: event.start?.dateTime || event.start?.date || 'Unknown',
+          end: event.end?.dateTime || event.end?.date || 'Unknown'
+        })) || [];
+        
+        // Get busy times
+        const freeBusyResponse = await calendar.freebusy.query({
+          requestBody: {
+            timeMin: now.toISOString(),
+            timeMax: nextWeek.toISOString(),
+            items: [{ id: 'primary' }]
+          }
+        });
+        
+        busySlots = freeBusyResponse.data.calendars?.primary?.busy || [];
+        
+      } catch (error) {
+        console.error('Error accessing calendar:', error);
+        calendarError = error instanceof Error ? error.message : 'Unknown error';
+      }
+    }
+    
+    // Build status message
+    const blocks: any[] = [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Calendar Status:* ${hasRefreshToken ? 'Connected ✅' : 'Partially Connected ⚠️'}`
+        }
+      }
+    ];
+    
+    // Add token info
+    blocks.push({
+      type: 'section',
+      fields: [
+        {
+          type: 'mrkdwn',
+          text: `*Has Token:* ${hasToken ? 'Yes' : 'No'}`
+        },
+        {
+          type: 'mrkdwn',
+          text: `*Has Refresh Token:* ${hasRefreshToken ? 'Yes' : 'No'}`
+        },
+        {
+          type: 'mrkdwn',
+          text: `*Token Status:* ${isExpired ? 'Expired ❌' : 'Valid ✅'}`
+        },
+        {
+          type: 'mrkdwn',
+          text: `*Expires:* ${expiryDate ? expiryDate.toLocaleString() : 'Unknown'}`
+        }
+      ]
+    });
+    
+    if (!hasRefreshToken) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '⚠️ *Missing refresh token* - You need to reconnect your calendar to enable automatic token refresh.'
+        }
+      });
+    }
+    
+    if (calendarError) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*API Error:* ${calendarError}`
+        }
+      });
+    }
+    
+    // Add upcoming events if we got them
+    if (events.length > 0) {
+      blocks.push({
+        type: 'divider'
+      });
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '*📅 Upcoming Events (Next 7 Days):*'
+        }
+      });
+      
+      events.forEach(event => {
+        const startDate = new Date(event.start);
+        const endDate = new Date(event.end);
+        blocks.push({
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `• *${event.summary}*\n  ${startDate.toLocaleString()} - ${endDate.toLocaleTimeString()}`
+          }
+        });
+      });
+    }
+    
+    // Add busy slots count
+    if (busySlots.length > 0) {
+      blocks.push({
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: `_Found ${busySlots.length} busy time slots in the next 7 days_`
+          }
+        ]
+      });
+    }
+    
+    await say({
+      text: '📅 Calendar Status',
+      blocks
+    });
+    
+  } catch (error) {
+    console.error('Error checking calendar status:', error);
+    await say({
+      text: '❌ An error occurred while checking your calendar status.',
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `❌ An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`
+          }
+        }
+      ]
+    });
+  }
+});
+
 // Handle /sync-workspace command (admin only)
 app.command('/sync-workspace', async ({ command, ack, say, client }) => {
   await ack();
