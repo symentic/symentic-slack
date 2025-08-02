@@ -14,9 +14,11 @@ interface SlackNotificationEvent {
   threadTs: string;
   questions?: {
     Payload?: {
+      acknowledgment?: string;
       questions: string[];
     };
   } | {
+    acknowledgment?: string;
     questions: string[];
   };
   bugReport?: {
@@ -80,37 +82,52 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
 
 async function sendBugQuestions(slack: WebClient, event: SlackNotificationEvent) {
   const questionsData = extractPayload(event.questions);
+  console.log('Received questions data:', JSON.stringify(questionsData, null, 2));
+  
   if (!questionsData || !questionsData.questions) {
     throw new Error('Questions not provided');
   }
   const questions = questionsData.questions;
+  const acknowledgment = questionsData.acknowledgment;
+  
+  // Build the message as one flowing conversation
+  let messageText = acknowledgment || '';
+  
+  // If there's a question, it should already be part of the acknowledgment for natural flow
+  // But if not, add it with spacing
+  if (questions.length > 0 && messageText && !messageText.includes('?')) {
+    messageText += ' ' + questions[0]; // Add as continuation
+  } else if (questions.length > 0 && !messageText) {
+    messageText = questions[0]; // Fallback if no acknowledgment
+  }
+  
+  const blocks: any[] = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: messageText
+      }
+    }
+  ];
+  
+  // Only add the "Feel free to answer" text if there are actually questions
+  if (questions.length > 0) {
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '_Feel free to answer in any order, or type "cancel" if you want to stop._'
+        }
+      ]
+    });
+  }
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
     thread_ts: event.threadTs,
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: '*To help resolve this issue, I need some additional information:*'
-        }
-      },
-      ...questions.map((q, i) => ({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `${i + 1}. ${q}`
-        }
-      })),
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: '_Please provide as much detail as possible. Type "cancel" to stop the bug report._'
-        }
-      }
-    ]
+    blocks
   });
 }
 
@@ -164,11 +181,15 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
       });
     }
   } else {
+    const threadLink = bugReport.threadTs && bugReport.channelId
+      ? `https://slack.com/archives/${bugReport.channelId}/p${bugReport.threadTs.replace('.', '')}`
+      : null;
+    
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `✅ *Bug Report ${bugNumber} Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}`
+        text: `✅ *Bug Report ${bugNumber} Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}${threadLink ? `\n<${threadLink}|View conversation thread>` : ''}`
       }
     });
     
@@ -184,14 +205,34 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
     }
   }
   
-  // Engineers info
+  // Engineers info with memory context
   if (engineers.length > 0) {
+    blocks.push({
+      type: 'divider'
+    });
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Assigned to:* ${engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
+        text: `*Based on my memory, here are the engineers best suited to fix this:*`
       }
+    });
+    
+    // Hardcoded engineer profiles for demo
+    const engineerProfiles: Record<string, string> = {
+      'Richard Huang': 'Senior backend engineer specializing in payment systems and transaction processing. He recently fixed similar payment gateway issues.',
+      'Leo Gao': 'Full-stack engineer with expertise in frontend payment flows and API integrations. Led the recent payment system refactor.'
+    };
+    
+    engineers.forEach((engineer: any) => {
+      const profile = engineerProfiles[engineer.name] || 'Expert in this area based on past contributions.';
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `• <@${engineer.userId}> - *${engineer.name}*\n  _${profile}_`
+        }
+      });
     });
   }
   

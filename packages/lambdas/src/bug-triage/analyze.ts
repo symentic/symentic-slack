@@ -47,55 +47,10 @@ function inferCategory(description: string): string {
   return 'General';
 }
 
-// Rule-based completeness calculation
+// Placeholder function - actual completeness will come from AI
 function calculateRuleBasedCompleteness(bugReport: BugReportData): number {
-  let score = 0;
-  
-  // Base score for having a description
-  if (bugReport.description && bugReport.description.length > 10) {
-    score += 25;
-  }
-  
-  // Check for quality and completeness of each field
-  if (bugReport.reproductionSteps && bugReport.reproductionSteps.length > 10) {
-    score += 25;
-  }
-  
-  if (bugReport.environment && bugReport.environment.length > 5) {
-    score += 20;
-  }
-  
-  if (bugReport.impact && bugReport.impact.length > 10) {
-    score += 15;
-  }
-  
-  if (bugReport.errorMessages && bugReport.errorMessages.length > 5) {
-    score += 10;
-  }
-  
-  if (bugReport.frequency && bugReport.frequency.length > 3) {
-    score += 5;
-  }
-  
-  // Bonus for specific details
-  const allText = `${bugReport.description || ''} ${bugReport.environment || ''} ${bugReport.impact || ''}`.toLowerCase();
-  
-  // Payment-specific bugs
-  if (allText.includes('payment') || allText.includes('checkout') || allText.includes('transaction')) {
-    if (allText.includes('credit card') || allText.includes('paypal') || allText.includes('stripe')) {
-      score += 5; // Payment method mentioned
-    }
-    if (allText.includes('error') || allText.includes('failed') || allText.includes('declined')) {
-      score += 5; // Error details mentioned
-    }
-  }
-  
-  // Technical details bonus
-  if (allText.match(/version\s*\d+\.\d+/i) || allText.includes('chrome') || allText.includes('firefox') || allText.includes('safari')) {
-    score += 5; // Browser/version info
-  }
-  
-  return Math.min(score, 100);
+  // This is just a fallback - the real score comes from OpenAI
+  return 0;
 }
 
 interface AnalyzeBugEvent {
@@ -173,8 +128,8 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
     // Generate bug ID early so it's available throughout the workflow
     const bugId = bugReportData.bugId || `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
     
-    // Get next bug number (will be used whether duplicate or not)
-    const bugNumber = await bugCounterService.getNextBugNumber(workspaceId);
+    // Don't assign bug number here - wait until save to avoid incrementing on cancelled bugs
+    const bugNumber = undefined;
     
     // Check if this is a duplicate (>95% similarity)
     const isDuplicate = similarBugs.length > 0 && similarBugs[0].similarity > 0.95;
@@ -199,11 +154,10 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       })) : []
     };
     
-    // Calculate rule-based completeness score (more reliable)
-    const ruleBasedScore = calculateRuleBasedCompleteness(bugReportData);
-    console.log('Rule-based completeness score:', ruleBasedScore);
+    // Store original data for completeness calculation
+    const originalBugData = { ...bugReportData };
     
-    // Enhance bug descriptions with AI before analysis
+    // Enhance bug descriptions with AI for display/storage purposes only
     let enhancedData = {};
     try {
       const enhanced = await openAIService.enhanceBugDescription({
@@ -235,13 +189,14 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
     // Use OpenAI to analyze the bug report for quality and generate questions
     let aiAnalysis;
     try {
+      // IMPORTANT: Use ORIGINAL data for quality analysis, not enhanced data
       aiAnalysis = await openAIService.analyzeBugReportQuality({
-        description: bugReportData.description,
-        reproductionSteps: bugReportData.reproductionSteps,
-        environment: bugReportData.environment,
-        impact: bugReportData.impact,
-        errorMessages: bugReportData.errorMessages,
-        frequency: bugReportData.frequency
+        description: originalBugData.description,
+        reproductionSteps: originalBugData.reproductionSteps,
+        environment: originalBugData.environment,
+        impact: originalBugData.impact,
+        errorMessages: originalBugData.errorMessages,
+        frequency: originalBugData.frequency
       });
       console.log('AI analysis result:', JSON.stringify(aiAnalysis, null, 2));
     } catch (aiError) {
@@ -265,13 +220,17 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
         fallbackIsEmergency = true;
       }
       
-      // Fallback AI analysis
+      // Fallback AI analysis - be very conservative
       aiAnalysis = {
-        completenessScore: ruleBasedScore, // Use rule-based score
-        qualityRating: ruleBasedScore >= 80 ? 8 : ruleBasedScore >= 60 ? 6 : 4,
-        missingInformation: [],
-        followUpQuestions: [],
-        confidence: 0.5,
+        completenessScore: 20, // Default to low score to encourage more questions
+        qualityRating: 3,
+        missingInformation: ['reproduction steps', 'environment details', 'impact'],
+        followUpQuestions: [
+          'Can you provide step-by-step instructions to reproduce this issue?',
+          'What browser and operating system are you using?',
+          'How is this affecting your work?'
+        ],
+        confidence: 0.3,
         category: 'general',
         severity: fallbackSeverity,
         isEmergency: fallbackIsEmergency
@@ -315,13 +274,13 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       }
     }
     
-    // Hybrid approach: Use rule-based score for completeness, AI for quality insights
+    // Use AI-driven completeness score
     const result: AnalysisResult = {
-      completenessScore: ruleBasedScore, // Always use rule-based score
-      qualityRating: aiAnalysis.qualityRating || Math.ceil(ruleBasedScore / 10),
+      completenessScore: aiAnalysis.completenessScore, // Use AI score directly
+      qualityRating: aiAnalysis.qualityRating,
       missingInformation: missingInfo.length > 0 ? missingInfo : aiAnalysis.missingInformation,
       followUpQuestions: followUpQuestions.length > 0 ? followUpQuestions : aiAnalysis.followUpQuestions,
-      confidence: aiAnalysis.confidence || (ruleBasedScore / 100),
+      confidence: aiAnalysis.confidence,
       category: aiAnalysis.category || inferCategory(bugReportData.description),
       isEmergency: aiAnalysis.isEmergency || false,
       severity: aiAnalysis.severity || 'medium',
@@ -333,7 +292,9 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
       enhancedBugReport: {
         ...bugReportData,
         bugId,
-        bugNumber
+        bugNumber,
+        severity: aiAnalysis.severity || 'medium',
+        category: aiAnalysis.category || inferCategory(bugReportData.description)
       }
     };
     

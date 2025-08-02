@@ -24,6 +24,11 @@ interface ProcessResponseEvent {
   analysis: {
     missingInformation: string[];
   };
+  questions?: {
+    Payload?: {
+      questions: string[];
+    };
+  };
 }
 
 interface ProcessedResponse {
@@ -34,6 +39,7 @@ interface ProcessedResponse {
     impact?: string;
     errorMessages?: string;
     frequency?: string;
+    timing?: string;
   };
   confidence: number;
 }
@@ -63,29 +69,23 @@ export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (
   
   try {
     // Use AI to extract structured information from the response
-    // Handle Step Functions nested payload structure
-    const analysisData = extractPayload(event.analysis) || event.analysis;
-    const systemPrompt = `Extract structured bug report information from the user's response.
+    const systemPrompt = `Extract structured bug report information from the user's conversational response.
+
 Current bug context: ${JSON.stringify(event.bugReport)}
-Missing information: ${analysisData.missingInformation.join(', ')}
+Questions asked: ${event.questions?.Payload?.questions?.join('; ') || 'General follow-up'}
 
-Extract information and map it to these fields:
-- reproductionSteps: What steps the user took (e.g., "went to page, pressed pay button")
-- environment: Browser, OS, device, or context (e.g., "checkout page", "payment form")
-- impact: What happened or didn't happen (e.g., "payment not processed", "transaction failed")
-- errorMessages: Any error messages shown (e.g., "unexpected error", "undefined")
+The user is having a natural conversation about their bug. Extract and map information to these fields:
+- reproductionSteps: What steps the user took
+- environment: Browser, OS, device, location in app
+- impact: What's broken or not working
+- errorMessages: Any specific error text
 - frequency: How often it happens
+- timing: When it started happening
 
-Also extract payment-specific details if mentioned:
-- Payment method (credit card, PayPal, etc.)
-- Transaction stage (checkout, processing, confirmation)
-- Payment status (failed, pending, not processed)
-
-Map the information to the most appropriate field above. For example:
-- "pressed pay button" → reproductionSteps
-- "unexpected error" → errorMessages
-- "payment was not processed" → impact
-- "credit card" → environment (include with other context)
+Be smart about conversational responses. Examples:
+- "Yeah it's been happening for days" → timing: "past few days", frequency: "consistent"
+- "I get error processing when I try to pay" → errorMessages: "error processing", reproductionSteps: "attempting to pay"
+- "It says error processing. Yes it's consistent for the past few days" → errorMessages: "error processing", frequency: "consistent", timing: "past few days"
 
 Return JSON with extractedInfo object containing the mapped fields and confidence score (0-1).`;
 

@@ -1,4 +1,10 @@
 import { Handler } from 'aws-lambda';
+import { openAIService } from '@symentic/core';
+
+interface ConversationPair {
+  question: string;
+  response: string;
+}
 
 interface BugReportData {
   bugId?: string;
@@ -16,6 +22,8 @@ interface BugReportData {
   frequency?: string;
   completenessScore?: number;
   lastUpdated?: string;
+  conversationHistory?: ConversationPair[];
+  threadTs?: string;
 }
 
 interface UpdateBugEvent {
@@ -44,6 +52,20 @@ interface UpdateBugEvent {
       bugNumber?: number;
     };
   };
+  // Questions that were asked
+  questions?: {
+    Payload?: {
+      questions: string[];
+    };
+  };
+  // User's response
+  userResponse?: {
+    userResponse?: {
+      text: string;
+    };
+  };
+  // Conversation history from previous iterations
+  conversationHistory?: ConversationPair[];
   // Legacy field for backward compatibility
   newInfo?: {
     reproductionSteps?: string;
@@ -62,9 +84,21 @@ export const handler: Handler<UpdateBugEvent, BugReportData> = async (event) => 
   const newInfo = event.processedResponse?.Payload?.extractedInfo || event.newInfo || {};
   const analysisResult = event.analysis?.Payload;
   
+  // Update conversation history
+  const conversationHistory = [...(event.conversationHistory || [])];
+  
+  // Add the latest Q&A pair if available
+  if (event.questions?.Payload?.questions?.[0] && event.userResponse?.userResponse?.text) {
+    conversationHistory.push({
+      question: event.questions.Payload.questions[0],
+      response: event.userResponse.userResponse.text
+    });
+  }
+  
   // Merge new information into bug report, preserving existing data
   const updatedBugReport: BugReportData = {
     ...bugReportData,
+    conversationHistory,
     lastUpdated: new Date().toISOString()
   };
   
@@ -115,52 +149,65 @@ export const handler: Handler<UpdateBugEvent, BugReportData> = async (event) => 
     updatedBugReport.frequency = newInfo.frequency;
   }
   
-  // Recalculate completeness
-  const completeness = calculateCompleteness(updatedBugReport);
+  // Recalculate completeness using AI
+  let completenessScore = 25; // Default fallback
+  
+  try {
+    // Use AI to analyze the updated bug report
+    const analysis = await openAIService.analyzeBugReportQuality({
+      description: updatedBugReport.description,
+      reproductionSteps: updatedBugReport.reproductionSteps,
+      environment: updatedBugReport.environment,
+      impact: updatedBugReport.impact,
+      errorMessages: updatedBugReport.errorMessages,
+      frequency: updatedBugReport.frequency
+    });
+    
+    completenessScore = analysis.completenessScore;
+    console.log('AI-calculated completeness score:', completenessScore);
+    
+    // Also update severity if AI found it to be different
+    if (analysis.severity && analysis.severity !== updatedBugReport.severity) {
+      console.log(`AI suggests updating severity from ${updatedBugReport.severity} to ${analysis.severity}`);
+      updatedBugReport.severity = analysis.severity;
+    }
+  } catch (error) {
+    console.error('Failed to calculate completeness with AI, using fallback:', error);
+    // Use simplified fallback calculation
+    completenessScore = calculateCompleteness(updatedBugReport);
+  }
   
   return {
     ...updatedBugReport,
-    completenessScore: completeness
+    completenessScore
   };
 };
 
+// Simplified fallback function - only used if AI fails
 function calculateCompleteness(bugReport: BugReportData): number {
-  let score = 25; // Base score for having a description
+  // Very basic scoring as fallback
+  let score = 0;
   
-  // Check for quality and completeness of each field
-  if (bugReport.reproductionSteps && bugReport.reproductionSteps.length > 10) {
-    score += 25;
+  if (bugReport.description) score += 15;
+  if (bugReport.reproductionSteps) score += 20;
+  if (bugReport.environment) score += 15;
+  if (bugReport.impact) score += 15;
+  if (bugReport.errorMessages) score += 15;
+  if (bugReport.frequency) score += 10;
+  
+  // Total text length check
+  const totalLength = [
+    bugReport.description,
+    bugReport.reproductionSteps,
+    bugReport.environment,
+    bugReport.impact,
+    bugReport.errorMessages
+  ].filter(Boolean).join(' ').length;
+  
+  if (totalLength < 100) {
+    score = Math.floor(score * 0.5); // Heavily penalize very short reports
   }
   
-  if (bugReport.environment && bugReport.environment.length > 5) {
-    score += 20;
-  }
-  
-  if (bugReport.impact && bugReport.impact.length > 10) {
-    score += 15;
-  }
-  
-  if (bugReport.errorMessages) {
-    score += 10;
-  }
-  
-  if (bugReport.frequency) {
-    score += 5;
-  }
-  
-  // Bonus for payment-specific information
-  const description = (bugReport.description || '').toLowerCase();
-  const allText = `${description} ${bugReport.environment || ''} ${bugReport.impact || ''}`.toLowerCase();
-  
-  if (allText.includes('payment') || allText.includes('checkout') || allText.includes('transaction')) {
-    // For payment bugs, check for payment-specific details
-    if (allText.includes('credit card') || allText.includes('paypal') || allText.includes('stripe')) {
-      score += 5; // Payment method mentioned
-    }
-    if (allText.includes('error') || allText.includes('failed') || allText.includes('declined')) {
-      score += 5; // Error details mentioned
-    }
-  }
-  
+  console.log('Fallback completeness score:', score);
   return Math.min(score, 100);
 }

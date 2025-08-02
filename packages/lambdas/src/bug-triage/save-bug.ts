@@ -1,7 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { BugReport, profileEngramService } from '@symentic/core';
+import { BugReport, profileEngramService, openAIService, bugCounterService } from '@symentic/core';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
@@ -53,19 +53,39 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   // Extract workspace ID from the channel ID pattern
   const workspaceId = bugReport.channelId?.substring(0, 11).match(/^[A-Z][0-9A-Z]+/)?.[0] || 'unknown';
   
-  // Enhancement is now done in analyze Lambda, no need to do it here
+  // Assign bug number here (only when actually saving, not when cancelled)
+  const bugNumber = await bugCounterService.getNextBugNumber(workspaceId);
+  
+  // Generate narrative description from conversation if available
+  let enhancedDescription = bugReport.description;
+  if ((bugReport as any).conversationHistory?.length > 0) {
+    enhancedDescription = await generateNarrativeFromConversation(
+      bugReport.description,
+      (bugReport as any).conversationHistory
+    );
+  }
+  
+  // Extract conversation Q&As if available
+  const conversationHistory = (bugReport as any).conversationHistory || [];
+  const conversations = {
+    questions: conversationHistory.map((c: any) => c.question),
+    responses: conversationHistory.map((c: any) => c.response)
+  };
   
   const bugReportData: BugReport = {
     ...bugReport,
     bugId,
+    bugNumber, // Add the bug number we just assigned
     workspaceId, // Add workspace ID for querying
+    description: enhancedDescription,
     assignedTo: Array.isArray(engineers) ? engineers.map((e: any) => e.userId) : [],
     triageChannel: channel && typeof channel === 'object' && 'channelId' in channel ? channel.channelId : undefined,
     channelName: channel && typeof channel === 'object' && 'channelName' in channel ? channel.channelName : undefined,
     meetingId: meeting && typeof meeting === 'object' && 'meetingId' in meeting ? meeting.meetingId : undefined,
     status: 'triaged',
     createdAt: bugReport.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    conversations
   };
   
   try {
@@ -86,6 +106,58 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
     throw error;
   }
 };
+
+async function generateNarrativeFromConversation(
+  initialReport: string,
+  conversation: Array<{ question: string; response: string }>
+): Promise<string> {
+  if (conversation.length === 0) {
+    return initialReport;
+  }
+
+  const systemPrompt = `You are creating a comprehensive bug report narrative from a conversation. 
+Combine the initial report and Q&A pairs into a clear, detailed description that engineers can use to fix the issue.
+
+Guidelines:
+1. Start with a clear summary of the issue
+2. Include all technical details gathered through the conversation
+3. Organize information logically (what happens, when, how it affects the user)
+4. Keep the technical details but make it flow naturally
+5. Include error messages, steps to reproduce, and environmental details
+6. End with impact/severity information if available
+
+Output a single paragraph narrative description.`;
+
+  const userPrompt = `Initial Report: ${initialReport}
+
+Conversation:
+${conversation.map((pair, i) => 
+  `Q: ${pair.question}\nA: ${pair.response}`
+).join('\n\n')}
+
+Generate a comprehensive bug description from this conversation.`;
+
+  try {
+    const response = await openAIService.classifyWithModel(
+      systemPrompt,
+      userPrompt,
+      'gpt-4o-mini'
+    );
+    
+    // Try to parse as JSON first (in case the model returns JSON)
+    try {
+      const parsed = JSON.parse(response);
+      return parsed.description || response;
+    } catch {
+      // If not JSON, return the raw response
+      return response;
+    }
+  } catch (error) {
+    console.error('Error generating narrative:', error);
+    // Fallback to original description
+    return initialReport;
+  }
+}
 
 async function createBugEngram(bugReport: BugReport) {
   const engram = {

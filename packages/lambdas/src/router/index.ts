@@ -266,8 +266,26 @@ app.command('/connect-calendar', async ({ command, ack, say }) => {
   const userId = command.user_id;
   
   try {
+    // Import dynamoDBService
+    const { dynamoDBService } = await import('@symentic/core');
+    
+    // Check if user already has tokens
+    const existingTokens = await dynamoDBService.getCalendarToken(userId);
+    const hasRefreshToken = existingTokens && existingTokens.refresh_token;
+    
     // Generate auth URL for the user
     const authUrl = await googleCalendarService.getAuthUrl(userId);
+    
+    // Customize message based on existing connection
+    let headerText = '*Connect your Google Calendar for automatic meeting scheduling*';
+    let contextText = '_Your calendar data will be used only for scheduling bug triage meetings. You can disconnect at any time._';
+    
+    if (existingTokens && !hasRefreshToken) {
+      headerText = '*⚠️ Your calendar connection needs to be refreshed*\n\nYour previous connection is missing a refresh token. To fix this:\n\n1. Go to https://myaccount.google.com/permissions\n2. Find "Symentic" and click "Remove Access"\n3. Click the button below to reconnect';
+      contextText = '_This will ensure your calendar stays connected and can refresh automatically._';
+    } else if (hasRefreshToken) {
+      headerText = '*Your calendar appears to be already connected*\n\nIf you\'re experiencing issues, you can reconnect. First:\n\n1. Go to https://myaccount.google.com/permissions\n2. Find "Symentic" and click "Remove Access"\n3. Click the button below to reconnect';
+    }
     
     await say({
       text: '📅 Connect Your Google Calendar',
@@ -276,7 +294,7 @@ app.command('/connect-calendar', async ({ command, ack, say }) => {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: '*Connect your Google Calendar for automatic meeting scheduling*\n\nOnce connected, I can:\n• Check your availability for bug triage meetings\n• Schedule meetings directly on your calendar\n• Find common time slots with your team\n• Send you meeting invitations'
+            text: headerText + '\n\nOnce connected, I can:\n• Check your availability for bug triage meetings\n• Schedule meetings directly on your calendar\n• Find common time slots with your team\n• Send you meeting invitations'
           }
         },
         {
@@ -289,7 +307,7 @@ app.command('/connect-calendar', async ({ command, ack, say }) => {
               type: 'button',
               text: {
                 type: 'plain_text',
-                text: 'Connect Google Calendar'
+                text: hasRefreshToken ? 'Reconnect Google Calendar' : 'Connect Google Calendar'
               },
               url: authUrl,
               style: 'primary'
@@ -301,7 +319,7 @@ app.command('/connect-calendar', async ({ command, ack, say }) => {
           elements: [
             {
               type: 'mrkdwn',
-              text: '_Your calendar data will be used only for scheduling bug triage meetings. You can disconnect at any time._'
+              text: contextText
             }
           ]
         }
@@ -457,8 +475,24 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
   await ack();
   
   const userId = command.user_id;
+  const businessId = command.team_id;
   
   try {
+    // Get user's timezone from their profile
+    let userTimezone = 'America/New_York'; // Default fallback
+    try {
+      const userProfile = await profileEngramService.getProfile(businessId, userId);
+      if (userProfile?.slackProfile?.timezone) {
+        userTimezone = userProfile.slackProfile.timezone;
+        console.log(`Using user's timezone: ${userTimezone} for user: ${userId}`);
+      } else {
+        console.log(`No timezone found for user ${userId}, using default: ${userTimezone}`);
+      }
+    } catch (error) {
+      console.error('Error retrieving user profile for timezone:', error);
+      // Continue with default timezone
+    }
+    
     // Check if user has calendar token
     const dynamoDBService = (await import('@symentic/core')).dynamoDBService;
     let token: any = null;
@@ -588,7 +622,14 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
         },
         {
           type: 'mrkdwn',
-          text: `*Expires:* ${expiryDate ? expiryDate.toLocaleString() : 'Unknown'}`
+          text: `*Expires:* ${expiryDate ? expiryDate.toLocaleString('en-US', {
+            timeZone: userTimezone,
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+            timeZoneName: 'short'
+          }) : 'Unknown'}`
         }
       ]
     });
@@ -629,11 +670,30 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
       events.forEach(event => {
         const startDate = new Date(event.start);
         const endDate = new Date(event.end);
+        
+        // Format times in user's timezone
+        const formattedStart = startDate.toLocaleString('en-US', {
+          timeZone: userTimezone,
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZoneName: 'short'
+        });
+        
+        const formattedEnd = endDate.toLocaleString('en-US', {
+          timeZone: userTimezone,
+          hour: 'numeric',
+          minute: '2-digit',
+          timeZoneName: 'short'
+        });
+        
         blocks.push({
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `• *${event.summary}*\n  ${startDate.toLocaleString()} - ${endDate.toLocaleTimeString()}`
+            text: `• *${event.summary}*\n  ${formattedStart} - ${formattedEnd}`
           }
         });
       });
@@ -886,7 +946,7 @@ app.message(async ({ message, say, client, body }) => {
       console.log('Bug report condition met, sending acknowledgment...');
       // Send immediate acknowledgment first (to meet Slack's 3s timeout)
       await say({
-        text: '🐛 I\'ve detected a bug report. Starting the triage process...',
+        text: '🐛 Thanks for reporting this! Let me check my memory for relevant context...',
         thread_ts: msg.thread_ts || msg.ts
       });
       
@@ -1001,6 +1061,7 @@ async function startBugTriageWorkflow(
         },
         threadTs,
         attemptCount: 0,
+        conversationHistory: [],
         executionId: execution.executionId
       })
     };
@@ -1063,6 +1124,21 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
     const selectedTime = JSON.parse(selectedTimeValue);
     const meetingStart = new Date(selectedTime.start);
     
+    // Get user's timezone from their profile
+    let userTimezone = 'America/New_York'; // Default fallback
+    try {
+      const businessId = payload?.team?.id;
+      if (businessId) {
+        const userProfile = await profileEngramService.getProfile(businessId, payload.user.id);
+        if (userProfile?.slackProfile?.timezone) {
+          userTimezone = userProfile.slackProfile.timezone;
+        }
+      }
+    } catch (error) {
+      console.error('Error retrieving user profile for timezone in meeting confirmation:', error);
+      // Continue with default timezone
+    }
+    
     // Create the actual calendar event
     try {
       const { googleCalendarService } = await import('@symentic/core');
@@ -1100,7 +1176,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
-                timeZone: 'America/New_York'
+                timeZone: userTimezone,
+                timeZoneName: 'short'
               })}\n*Duration:* 30 minutes\n*Meeting Link:* ${calendarEvent.eventLink || 'Check your calendar'}`
             }
           },
@@ -1141,7 +1218,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
-                timeZone: 'America/New_York'
+                timeZone: userTimezone,
+                timeZoneName: 'short'
               })}\n*Duration:* 30 minutes\n\n_Please add this to your calendar manually._`
             }
           }

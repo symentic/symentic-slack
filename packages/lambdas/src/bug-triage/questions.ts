@@ -7,10 +7,16 @@ interface BugReportData {
   environment?: string;
   impact?: string;
   errorMessages?: string;
+  frequency?: string;
   reportedBy?: string;
   channel?: string;
   timestamp?: string;
   severity?: string;
+}
+
+interface ConversationPair {
+  question: string;
+  response: string;
 }
 
 interface GenerateQuestionsEvent {
@@ -29,12 +35,16 @@ interface GenerateQuestionsEvent {
     Payload: BugReportData;
   };
   attemptCount: number;
+  conversationHistory?: ConversationPair[];
 }
 
 interface QuestionsResult {
+  acknowledgment?: string;
   questions: string[];
   priority: 'high' | 'medium' | 'low';
   reasoning: string;
+  conversationHistory?: ConversationPair[];
+  shouldContinue?: boolean;
 }
 
 export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (event) => {
@@ -44,45 +54,84 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
   const analysisData = event.analysis?.Payload || event.analysis || {};
   
   try {
-    // Don't ask too many times
+    // Stop after 3 attempts (3 questions)
     if (event.attemptCount >= 3) {
       return {
-        questions: ['Can you provide any additional details that might help us resolve this issue?'],
+        questions: [], // Stop asking questions
         priority: 'low',
-        reasoning: 'Maximum follow-up attempts reached'
+        reasoning: '3 questions completed - creating bug report with current information'
       };
     }
     
     // Handle nested payload structure from Step Functions
     const bugReportData = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
     
+    // Build conversation context
+    const allInfo = [
+      bugReportData.description,
+      bugReportData.reproductionSteps,
+      bugReportData.environment,
+      bugReportData.impact,
+      bugReportData.errorMessages
+    ].filter(Boolean).join(' ');
+    
+    // Extract conversation history
+    const conversationHistory = event.conversationHistory || [];
+    const previousQuestions = conversationHistory.map(pair => pair.question);
+    const userResponses = conversationHistory.map(pair => pair.response);
+    
     // Generate contextual questions based on what's missing
     const result = await openAIService.generateContextualFollowUps({
-      description: bugReportData.description,
+      description: allInfo, // Include all available info for better context
       currentInfo: {
-        reproductionSteps: bugReportData.reproductionSteps,
-        environment: bugReportData.environment,
-        impact: bugReportData.impact,
-        errorMessages: bugReportData.errorMessages
+        // Include all fields from bugReportData
+        ...bugReportData,
+        // Ensure all expected fields are included
+        reproductionSteps: bugReportData.reproductionSteps || '',
+        environment: bugReportData.environment || '',
+        impact: bugReportData.impact || '',
+        errorMessages: bugReportData.errorMessages || '',
+        frequency: bugReportData.frequency || ''
       },
-      previousQuestions: [], // TODO: Track previous questions
-      userResponses: [] // TODO: Track user responses
+      previousQuestions,
+      userResponses
     });
     
-    // Limit to 2-3 questions for better UX
-    const limitedQuestions = result.questions.slice(0, 3);
+    // Log if no acknowledgment was generated (for debugging)
+    if (conversationHistory.length === 0 && !result.acknowledgment) {
+      console.warn('WARNING: No acknowledgment generated for first questions. Bug description:', bugReportData.description);
+    }
+    
+    // Ensure we only get one question for natural conversation
+    const questions = result.questions ? result.questions.slice(0, 1) : [];
+    
+    // Log the result for debugging
+    console.log('AI-generated result:', JSON.stringify(result, null, 2));
+    console.log('Previous questions asked:', previousQuestions);
+    console.log('User responses received:', userResponses);
+    console.log('Current bug data:', JSON.stringify(bugReportData, null, 2));
+    
+    // Check if AI explicitly said to stop (empty questions array means we have enough info)
+    const aiWantsToStop = result.questions && result.questions.length === 0;
+    
+    // HARDCODED: Stop after exactly 3 questions
+    const hasExactlyThreeQuestions = conversationHistory.length >= 3;
+    const shouldStop = hasExactlyThreeQuestions; // Always stop after 3 questions
     
     return {
-      questions: limitedQuestions.length > 0 ? limitedQuestions : getDefaultQuestions(analysisData.missingInformation || []),
+      acknowledgment: result.acknowledgment,
+      questions: shouldStop ? [] : (questions.length > 0 ? questions : getDefaultQuestions(analysisData.missingInformation || []).slice(0, 1)),
       priority: result.priority,
-      reasoning: result.reasoning
+      reasoning: result.reasoning + (hasExactlyThreeQuestions ? ' (3 questions completed)' : ` (${3 - conversationHistory.length} more questions needed)`),
+      conversationHistory,
+      shouldContinue: !shouldStop && questions.length > 0
     };
   } catch (error) {
     console.error('Error generating questions:', error);
     
-    // Fallback questions
+    // Fallback questions - just one for conversation
     return {
-      questions: getDefaultQuestions(analysisData.missingInformation || []),
+      questions: getDefaultQuestions(analysisData.missingInformation || []).slice(0, 1),
       priority: 'medium',
       reasoning: 'Using default questions due to error'
     };

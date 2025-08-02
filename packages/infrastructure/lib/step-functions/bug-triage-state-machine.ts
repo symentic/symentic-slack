@@ -54,6 +54,12 @@ export class BugTriageStateMachine extends Construct {
 
       generateFollowUpQuestions: new stepfunctionsTasks.LambdaInvoke(this, 'GenerateFollowUpQuestions', {
         lambdaFunction: lambdaFunctions.bugQuestions,
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
+          attemptCount: stepfunctions.JsonPath.objectAt('$.attemptCount'),
+          conversationHistory: stepfunctions.JsonPath.objectAt('$.conversationHistory')
+        }),
         resultPath: '$.questions',
       }),
 
@@ -92,11 +98,7 @@ export class BugTriageStateMachine extends Construct {
 
       updateBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'UpdateBugReport', {
         lambdaFunction: lambdaFunctions.bugUpdate,
-        payload: stepfunctions.TaskInput.fromObject({
-          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
-          processedResponse: stepfunctions.JsonPath.objectAt('$.processedResponse'),
-          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
-        }),
+        payload: stepfunctions.TaskInput.fromJsonPathAt('$'),
         resultPath: '$.bugReport',
       }),
 
@@ -193,6 +195,7 @@ export class BugTriageStateMachine extends Construct {
           'threadTs.$': '$.threadTs',
           'bugId.$': '$.bugId',
           'analysis.$': '$.analysis',
+          'conversationHistory.$': '$.conversationHistory',
         },
       }),
 
@@ -204,6 +207,7 @@ export class BugTriageStateMachine extends Construct {
           'bugId.$': '$.analysis.Payload.bugId',
           'analysis.$': '$.analysis',
           'attemptCount.$': '$.attemptCount',
+          'conversationHistory.$': '$.conversationHistory',
         },
       }),
 
@@ -225,16 +229,17 @@ export class BugTriageStateMachine extends Construct {
       checkMaxAttempts: new stepfunctions.Choice(this, 'CheckMaxAttempts'),
       checkIfHighSeverity: new stepfunctions.Choice(this, 'CheckIfHighSeverity'),
       checkUpdatedCompleteness: new stepfunctions.Choice(this, 'CheckUpdatedCompleteness'),
+      checkIfHasQuestions: new stepfunctions.Choice(this, 'CheckIfHasQuestions'),
     };
   }
 
   private buildDefinition(tasks: any, states: any): stepfunctions.IChainable {
     // Define the flow
     
-    // Quality check
+    // Quality check - ALWAYS ask 3 questions regardless of completeness
     states.checkReportQuality
       .when(
-        stepfunctions.Condition.numberGreaterThanEquals('$.analysis.Payload.completenessScore', 80),
+        stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
         tasks.findRelevantEngineers
       )
       .otherwise(tasks.generateFollowUpQuestions);
@@ -247,18 +252,35 @@ export class BugTriageStateMachine extends Construct {
       )
       .otherwise(tasks.updateBugReport);
 
-    // Max attempts check
+    // Max attempts check - after 3 questions, still go through analyze to prepare data
     states.checkMaxAttempts
       .when(
         stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
-        tasks.maxAttemptsReached
+        tasks.analyzeBugReport // Go through analyze to ensure proper data structure
       )
       .otherwise(tasks.analyzeBugReport);
 
-    // High severity check
+    // High severity check - handle both direct and Payload wrapped paths with existence checks
     states.checkIfHighSeverity
       .when(
-        stepfunctions.Condition.stringEquals('$.bugReport.Payload.severity', 'high'),
+        stepfunctions.Condition.or(
+          // Check direct path
+          stepfunctions.Condition.and(
+            stepfunctions.Condition.isPresent('$.bugReport.severity'),
+            stepfunctions.Condition.or(
+              stepfunctions.Condition.stringEquals('$.bugReport.severity', 'high'),
+              stepfunctions.Condition.stringEquals('$.bugReport.severity', 'critical')
+            )
+          ),
+          // Check Payload wrapped path
+          stepfunctions.Condition.and(
+            stepfunctions.Condition.isPresent('$.bugReport.Payload.severity'),
+            stepfunctions.Condition.or(
+              stepfunctions.Condition.stringEquals('$.bugReport.Payload.severity', 'high'),
+              stepfunctions.Condition.stringEquals('$.bugReport.Payload.severity', 'critical')
+            )
+          )
+        ),
         tasks.createTriageChannel
       )
       .otherwise(tasks.saveBugReport);
@@ -269,8 +291,18 @@ export class BugTriageStateMachine extends Construct {
       .next(states.setEnhancedBugReport)
       .next(states.checkReportQuality);
     
+    // Add check for empty questions array
+    states.checkIfHasQuestions
+      .when(
+        stepfunctions.Condition.isPresent('$.questions.Payload.questions[0]'),
+        tasks.sendQuestionsToSlack
+      )
+      .otherwise(tasks.findRelevantEngineers);
+    
     tasks.generateFollowUpQuestions
-      .next(tasks.sendQuestionsToSlack)
+      .next(states.checkIfHasQuestions);
+      
+    tasks.sendQuestionsToSlack
       .next(tasks.waitForUserResponse)
       .next(tasks.processUserResponse)
       .next(states.checkIfCancelled);
@@ -280,10 +312,10 @@ export class BugTriageStateMachine extends Construct {
     tasks.updateBugReport
       .next(states.checkUpdatedCompleteness);
     
-    // Check if updated bug report is complete
+    // Check if we've reached 3 questions
     states.checkUpdatedCompleteness
       .when(
-        stepfunctions.Condition.numberGreaterThanEquals('$.bugReport.Payload.completenessScore', 80),
+        stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
         tasks.findRelevantEngineers
       )
       .otherwise(states.incrementAttempt);

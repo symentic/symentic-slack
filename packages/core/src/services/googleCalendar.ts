@@ -13,17 +13,31 @@ export class GoogleCalendarService {
     );
   }
 
-  async getAuthUrl(userId: string): Promise<string> {
+  async getAuthUrl(userId: string, forceNewToken: boolean = false): Promise<string> {
     const scopes = [
       'https://www.googleapis.com/auth/calendar',
       'https://www.googleapis.com/auth/calendar.events',
     ];
+
+    // Check if user already has a valid refresh token
+    if (!forceNewToken) {
+      try {
+        const existingTokens = await dynamoDBService.getCalendarToken(userId);
+        if (existingTokens && existingTokens.refresh_token) {
+          console.log(`User ${userId} already has a refresh token. Consider using existing connection.`);
+        }
+      } catch (error) {
+        console.log('Error checking existing tokens:', error);
+      }
+    }
 
     return this.oauth2Client.generateAuthUrl({
       access_type: 'offline',
       scope: scopes,
       state: userId, // Pass userId in state for later retrieval
       prompt: 'consent', // Force re-consent to ensure refresh token is returned
+      // Note: Google may still not return a refresh token if the user has already authorized the app
+      // To force a new refresh token, the user must revoke access at https://myaccount.google.com/permissions
     });
   }
 
@@ -32,13 +46,29 @@ export class GoogleCalendarService {
     const { tokens } = await this.oauth2Client.getToken(code);
     console.log('Tokens received from Google:', JSON.stringify(tokens, null, 2));
     
-    // Verify refresh token is present
+    // Check if we already have a refresh token stored
+    let finalTokens = { ...tokens };
     if (!tokens.refresh_token) {
-      console.warn(`WARNING: No refresh_token received for user ${userId}. User may need to revoke app access and re-authorize.`);
+      console.warn(`WARNING: No refresh_token received for user ${userId}.`);
+      
+      // Try to get existing refresh token
+      try {
+        const existingTokens = await dynamoDBService.getCalendarToken(userId);
+        if (existingTokens && existingTokens.refresh_token) {
+          console.log(`Using existing refresh_token for user ${userId}`);
+          finalTokens.refresh_token = existingTokens.refresh_token as string;
+        } else {
+          console.error(`No refresh token available for user ${userId}. User must revoke access at https://myaccount.google.com/permissions and re-authorize.`);
+          throw new Error('No refresh token received. Please revoke app access in your Google Account settings and try connecting again.');
+        }
+      } catch (error) {
+        console.error('Error retrieving existing tokens:', error);
+        throw new Error('No refresh token received. Please revoke app access at https://myaccount.google.com/permissions and reconnect.');
+      }
     }
     
-    await dynamoDBService.saveCalendarToken(userId, tokens as Record<string, unknown>);
-    console.log(`Calendar tokens saved for user ${userId}`);
+    await dynamoDBService.saveCalendarToken(userId, finalTokens as Record<string, unknown>);
+    console.log(`Calendar tokens saved for user ${userId} (refresh_token: ${finalTokens.refresh_token ? 'present' : 'missing'})`);
   }
 
   async getCalendarClient(userId: string) {

@@ -129,6 +129,9 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
   } catch (error) {
     console.error('Error handling OAuth callback:', error);
     
+    // Check if it's a refresh token error
+    const isRefreshTokenError = error instanceof Error && error.message.includes('refresh token');
+    
     return {
       statusCode: 500,
       headers: {
@@ -136,11 +139,87 @@ export const handler = async (event: APIGatewayProxyEvent): Promise<APIGatewayPr
       },
       body: `
         <html>
-          <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1>❌ Connection Failed</h1>
-            <p>There was an error connecting your calendar.</p>
-            <p>Error: ${error instanceof Error ? error.message : 'Unknown error'}</p>
-            <p>Please try again or contact support.</p>
+          <head>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+                text-align: center;
+                padding: 50px;
+                background-color: #f5f5f5;
+              }
+              .container {
+                max-width: 600px;
+                margin: 0 auto;
+                background: white;
+                padding: 40px;
+                border-radius: 10px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+              }
+              h1 {
+                color: #e74c3c;
+                font-size: 24px;
+                margin-bottom: 20px;
+              }
+              p {
+                color: #666;
+                line-height: 1.5;
+                margin-bottom: 15px;
+              }
+              .instructions {
+                background-color: #f8f9fa;
+                padding: 20px;
+                border-radius: 5px;
+                margin: 20px 0;
+                text-align: left;
+              }
+              .instructions ol {
+                margin: 10px 0;
+                padding-left: 20px;
+              }
+              .instructions li {
+                margin: 5px 0;
+              }
+              .error-details {
+                background-color: #fee;
+                padding: 10px;
+                border-radius: 5px;
+                margin: 10px 0;
+                font-size: 14px;
+                color: #c00;
+              }
+              a {
+                color: #4A154B;
+                text-decoration: none;
+                font-weight: 500;
+              }
+              a:hover {
+                text-decoration: underline;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>❌ Connection Failed</h1>
+              ${isRefreshTokenError ? `
+                <p><strong>Google did not provide a refresh token for your connection.</strong></p>
+                <p>This usually happens when you've previously authorized the app. To fix this:</p>
+                <div class="instructions">
+                  <ol>
+                    <li>Go to <a href="https://myaccount.google.com/permissions" target="_blank">Google Account Permissions</a></li>
+                    <li>Find "Symentic" in the list</li>
+                    <li>Click on it and select "Remove Access"</li>
+                    <li>Return to Slack and run <code>/connect-calendar</code> again</li>
+                  </ol>
+                </div>
+                <p>This will ensure your calendar connection can refresh automatically.</p>
+              ` : `
+                <p>There was an error connecting your calendar.</p>
+                <div class="error-details">
+                  Error: ${error instanceof Error ? error.message : 'Unknown error'}
+                </div>
+                <p>Please try again or contact support.</p>
+              `}
+            </div>
           </body>
         </html>
       `
