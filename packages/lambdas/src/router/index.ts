@@ -543,17 +543,27 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
     }
     
     // Check token status
-    const isExpired = token?.expiry_date ? (token.expiry_date as number) < Date.now() : false;
-    const expiryDate = token?.expiry_date ? new Date(token.expiry_date as number) : null;
+    let isExpired = token?.expiry_date ? (token.expiry_date as number) < Date.now() : false;
+    let expiryDate = token?.expiry_date ? new Date(token.expiry_date as number) : null;
     
     // Try to fetch calendar events
     let events: any[] = [];
     let busySlots: any[] = [];
     let calendarError = null;
+    let tokenRefreshed = false;
     
-    if (hasRefreshToken && !isExpired) {
+    if (hasRefreshToken) {
       try {
         const calendar = await googleCalendarService.getCalendarClient(userId);
+        
+        // Re-check token status after potential refresh
+        const updatedToken = await dynamoDBService.getCalendarToken(userId);
+        if (updatedToken?.expiry_date && updatedToken.expiry_date !== token?.expiry_date) {
+          tokenRefreshed = true;
+          token = updatedToken;
+          isExpired = (token.expiry_date as number) < Date.now();
+          expiryDate = new Date(token.expiry_date as number);
+        }
         
         // Get events for next 7 days
         const now = new Date();
@@ -640,6 +650,16 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
         text: {
           type: 'mrkdwn',
           text: '⚠️ *Missing refresh token* - You need to reconnect your calendar to enable automatic token refresh.'
+        }
+      });
+    }
+    
+    if (tokenRefreshed) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '🔄 *Token automatically refreshed* - Your calendar connection has been renewed.'
         }
       });
     }
@@ -879,6 +899,36 @@ app.command('/link-bugs', async ({ command, ack, say }) => {
   }
 });
 
+// Function to detect and create user ID mappings
+async function detectAndCreateUserIdMapping(messageUserId: string, client: WebClient): Promise<void> {
+  try {
+    // Import dynamoDBService
+    const { dynamoDBService } = await import('@symentic/core');
+    
+    // Check if we already have a mapping for this user
+    const existingMapping = await dynamoDBService.getUserIdMapping(messageUserId);
+    if (existingMapping) {
+      return; // Mapping already exists
+    }
+
+    // Get user info to find their email
+    const userInfo = await client.users.info({ user: messageUserId });
+    const email = userInfo.user?.profile?.email;
+    
+    if (email) {
+      // Check if any calendar tokens exist for users with this email
+      // This is a heuristic - we're looking for calendar tokens that might belong to this user
+      console.log(`Checking for calendar tokens that might belong to user ${messageUserId} with email ${email}`);
+      
+      // TODO: In the future, we could scan calendar tokens table for matching emails
+      // For now, we'll just log this for manual mapping creation
+      console.log(`User ID mapping candidate: messageUserId=${messageUserId}, email=${email}`);
+    }
+  } catch (error) {
+    console.error('Error detecting user ID mapping:', error);
+  }
+}
+
 // Handle all messages
 app.message(async ({ message, say, client, body }) => {
   const msg = message as SlackMessage;
@@ -1004,7 +1054,7 @@ app.message(async ({ message, say, client, body }) => {
 async function startBugTriageWorkflow(
   message: SlackMessage,
   intent: { intent: string; entities?: { severity?: string }; confidence: number },
-  client: { token?: string } // WebClient from @slack/bolt
+  client: WebClient // WebClient from @slack/bolt
 ) {
   console.log('=== startBugTriageWorkflow STARTED ===');
   console.log('Message:', {
@@ -1030,6 +1080,10 @@ async function startBugTriageWorkflow(
     const threadTs = message.thread_ts || message.ts;
     
     console.log('Creating execution record...');
+    
+    // Detect and create user ID mapping if needed
+    await detectAndCreateUserIdMapping(message.user!, client);
+    
     // Create execution record in our tracking table
     const execution = await executionTracker.createExecution({
       threadId: threadTs,
@@ -1144,7 +1198,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
       const { googleCalendarService } = await import('@symentic/core');
       
       // Create meeting for the user who clicked confirm
-      const attendeeEmails = buttonValue.engineers.map((userId: string) => `${userId}@company.com`);
+      const { getUserEmail } = await import('@symentic/core');
+      const attendeeEmails = buttonValue.engineers.map((userId: string) => getUserEmail(userId));
       const calendarEvent = await googleCalendarService.createMeeting(
         payload.user.id,
         attendeeEmails,
@@ -1286,12 +1341,29 @@ export const handler = async (
     }
     
     try {
-      await googleCalendarService.handleAuthCallback(code, state);
+      // The state parameter contains the user ID from the command
+      const commandUserId = state;
+      await googleCalendarService.handleAuthCallback(code, commandUserId);
+      
+      // Import dynamoDBService
+      const { dynamoDBService } = await import('@symentic/core');
+      
+      // Check if we have a user ID mapping for this user
+      const mapping = await dynamoDBService.getUserIdMapping(commandUserId);
+      if (mapping && mapping.alternateUserId && mapping.alternateUserId !== commandUserId) {
+        console.log(`Also storing calendar token for alternate user ID: ${mapping.alternateUserId}`);
+        // Get the tokens we just saved
+        const tokens = await dynamoDBService.getCalendarToken(commandUserId);
+        if (tokens) {
+          // Save the same tokens under the alternate ID
+          await dynamoDBService.saveCalendarToken(mapping.alternateUserId, tokens);
+        }
+      }
       
       // Send success message to Slack
       const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
       await slack.chat.postMessage({
-        channel: state,
+        channel: commandUserId,
         text: '✅ Your Google Calendar has been successfully connected!'
       });
       

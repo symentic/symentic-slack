@@ -1,7 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { BugReport, profileEngramService, openAIService, bugCounterService } from '@symentic/core';
+import { BugReport, openAIService } from '@symentic/core';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
@@ -40,7 +40,6 @@ interface SaveBugEvent {
 }
 
 export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
-  console.log('Saving bug report:', JSON.stringify(event, null, 2));
   
   // Handle Step Functions nested payload structure
   const bugReport = 'Payload' in event.bugReport ? event.bugReport.Payload : event.bugReport;
@@ -53,8 +52,11 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   // Extract workspace ID from the channel ID pattern
   const workspaceId = bugReport.channelId?.substring(0, 11).match(/^[A-Z][0-9A-Z]+/)?.[0] || 'unknown';
   
-  // Assign bug number here (only when actually saving, not when cancelled)
-  const bugNumber = await bugCounterService.getNextBugNumber(workspaceId);
+  // Bug number should already be assigned in analyze step
+  const bugNumber = bugReport.bugNumber;
+  if (!bugNumber) {
+    throw new Error('Bug number not found - should be assigned in analyze step');
+  }
   
   // Generate narrative description from conversation if available
   let enhancedDescription = bugReport.description;
@@ -75,7 +77,7 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   const bugReportData: BugReport = {
     ...bugReport,
     bugId,
-    bugNumber, // Add the bug number we just assigned
+    bugNumber, // Use the bug number from analyze step
     workspaceId, // Add workspace ID for querying
     description: enhancedDescription,
     assignedTo: Array.isArray(engineers) ? engineers.map((e: any) => e.userId) : [],
@@ -95,14 +97,11 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
     });
     await dynamodb.send(command);
     
-    console.log('Bug report saved successfully:', bugId);
-    
     // Also create engrams for long-term memory
     await createBugEngram(bugReportData);
     
     return bugReportData;
   } catch (error) {
-    console.error('Error saving bug report:', error);
     throw error;
   }
 };
@@ -153,7 +152,6 @@ Generate a comprehensive bug description from this conversation.`;
       return response;
     }
   } catch (error) {
-    console.error('Error generating narrative:', error);
     // Fallback to original description
     return initialReport;
   }
@@ -182,88 +180,8 @@ async function createBugEngram(bugReport: BugReport) {
     });
     await dynamodb.send(command);
     
-    console.log('Created engram for bug report');
   } catch (error) {
-    console.error('Error creating engram:', error);
     // Non-critical, don't throw
   }
 }
 
-async function enrichUserProfiles(
-  bugReport: BugReport,
-  engineers?: Array<{ userId: string; name: string }> | null
-) {
-  try {
-    // Extract businessId from the first part of the channel ID (e.g., C096L631QGM -> T096L)
-    // This is a simplified approach - in production, you'd want to store businessId properly
-    const businessId = bugReport.channelId?.substring(0, 5).replace('C', 'T') || '';
-    
-    if (!businessId) {
-      console.log('No businessId found, skipping profile enrichment');
-      return;
-    }
-    
-    // Enrich reporter's profile
-    if (bugReport.reportedBy) {
-      await profileEngramService.addEnrichment(businessId, bugReport.reportedBy, {
-        title: `Reported ${bugReport.severity} Bug`,
-        content: `Reported bug: "${bugReport.description.substring(0, 100)}..." - ${bugReport.severity} severity`,
-        source: 'bug_report',
-        metadata: {
-          bugId: bugReport.bugId
-        }
-      });
-      
-      // Update expertise based on bug category
-      if (bugReport.category) {
-        const profile = await profileEngramService.getProfile(businessId, bugReport.reportedBy);
-        if (profile) {
-          const expertise = profile.expertise || [];
-          if (!expertise.includes(bugReport.category)) {
-            expertise.push(bugReport.category);
-            await profileEngramService.updateProfile({
-              businessId,
-              userId: bugReport.reportedBy,
-              updates: { expertise }
-            });
-          }
-        }
-      }
-    }
-    
-    // Enrich assigned engineers' profiles
-    if (engineers && Array.isArray(engineers)) {
-      for (const engineer of engineers) {
-        await profileEngramService.addEnrichment(businessId, engineer.userId, {
-          title: `Assigned to ${bugReport.severity} Bug`,
-          content: `Assigned to fix: "${bugReport.description.substring(0, 100)}..."`,
-          source: 'bug_report',
-          metadata: {
-            bugId: bugReport.bugId
-          }
-        });
-        
-        // Update expertise
-        if (bugReport.category) {
-          const profile = await profileEngramService.getProfile(businessId, engineer.userId);
-          if (profile) {
-            const expertise = profile.expertise || [];
-            if (!expertise.includes(bugReport.category)) {
-              expertise.push(bugReport.category);
-              await profileEngramService.updateProfile({
-                businessId,
-                userId: engineer.userId,
-                updates: { expertise }
-              });
-            }
-          }
-        }
-      }
-    }
-    
-    console.log('User profiles enriched for bug:', bugReport.bugId);
-  } catch (error) {
-    console.error('Error enriching user profiles:', error);
-    // Don't throw - this is a non-critical operation
-  }
-}

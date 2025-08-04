@@ -48,8 +48,6 @@ interface QuestionsResult {
 }
 
 export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (event) => {
-  console.log('Generating follow-up questions:', JSON.stringify(event, null, 2));
-  
   // Handle Step Functions nested payload structure
   const analysisData = event.analysis?.Payload || event.analysis || {};
   
@@ -97,19 +95,8 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
       userResponses
     });
     
-    // Log if no acknowledgment was generated (for debugging)
-    if (conversationHistory.length === 0 && !result.acknowledgment) {
-      console.warn('WARNING: No acknowledgment generated for first questions. Bug description:', bugReportData.description);
-    }
-    
     // Ensure we only get one question for natural conversation
     const questions = result.questions ? result.questions.slice(0, 1) : [];
-    
-    // Log the result for debugging
-    console.log('AI-generated result:', JSON.stringify(result, null, 2));
-    console.log('Previous questions asked:', previousQuestions);
-    console.log('User responses received:', userResponses);
-    console.log('Current bug data:', JSON.stringify(bugReportData, null, 2));
     
     // Check if AI explicitly said to stop (empty questions array means we have enough info)
     const aiWantsToStop = result.questions && result.questions.length === 0;
@@ -127,8 +114,6 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
       shouldContinue: !shouldStop && questions.length > 0
     };
   } catch (error) {
-    console.error('Error generating questions:', error);
-    
     // Fallback questions - just one for conversation
     return {
       questions: getDefaultQuestions(analysisData.missingInformation || []).slice(0, 1),

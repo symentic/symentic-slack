@@ -45,14 +45,11 @@ interface ProcessedResponse {
 }
 
 export const handler: Handler<ProcessResponseEvent, ProcessedResponse> = async (event) => {
-  console.log('Processing user response:', JSON.stringify(event, null, 2));
-  
   // Handle Step Functions nested payload structure
   // The response might be in event.userResponse.userResponse due to SQS message structure
   const responseData = event.userResponse?.userResponse || extractPayload(event.response) || event.response;
   
   if (!responseData || !responseData.text) {
-    console.error('No valid response text found in event:', event);
     throw new Error('Response text is required');
   }
   
@@ -105,8 +102,6 @@ Return JSON with extractedInfo object containing the mapped fields and confidenc
       confidence: parsed.confidence || 0.7
     };
   } catch (error) {
-    console.error('Error processing response:', error);
-    
     // Fallback: Try to extract basic info
     return {
       action: 'continue',

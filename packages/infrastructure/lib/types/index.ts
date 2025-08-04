@@ -8,6 +8,7 @@ export interface LambdaFunctions {
   bugQuestions: lambda.Function;
   bugProcessResponse: lambda.Function;
   bugUpdate: lambda.Function;
+  bugEnhance: lambda.Function;
   bugFindEngineers: lambda.Function;
   bugCreateChannel: lambda.Function;
   bugSave: lambda.Function;
@@ -33,6 +34,7 @@ export interface DynamoDBTables {
   workflowsTable: dynamodb.Table;
   executionsTable: dynamodb.Table;
   profileEngramsTable: dynamodb.Table;
+  userIdMappingsTable: dynamodb.Table;
 }
 
 export interface StageConfig {

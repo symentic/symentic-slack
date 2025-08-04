@@ -126,21 +126,28 @@ function getDefaultSlots(engineerUserIds: string[], urgency: string): Availabili
   
   // Start from next business hour
   const startTime = new Date(now);
+  
+  // First, skip weekends if we're currently on a weekend
+  while (startTime.getDay() === 0 || startTime.getDay() === 6) {
+    startTime.setDate(startTime.getDate() + 1);
+    startTime.setHours(9, 0, 0, 0); // Set to 9 AM on the next weekday
+  }
+  
+  // Then handle business hours
   if (startTime.getHours() >= 17) {
     // After 5 PM, start from next day 9 AM
     startTime.setDate(startTime.getDate() + 1);
     startTime.setHours(9, 0, 0, 0);
+    // Skip weekend if next day is weekend
+    while (startTime.getDay() === 0 || startTime.getDay() === 6) {
+      startTime.setDate(startTime.getDate() + 1);
+    }
   } else if (startTime.getHours() < 9) {
-    // Before 9 AM, start from 9 AM
+    // Before 9 AM, start from 9 AM same day
     startTime.setHours(9, 0, 0, 0);
   } else {
     // Round to next 30-minute slot
     startTime.setMinutes(Math.ceil(startTime.getMinutes() / 30) * 30, 0, 0);
-  }
-  
-  // Skip weekends
-  while (startTime.getDay() === 0 || startTime.getDay() === 6) {
-    startTime.setDate(startTime.getDate() + 1);
   }
   
   // Generate slots based on urgency

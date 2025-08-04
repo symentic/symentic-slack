@@ -26,6 +26,7 @@ export class DynamoDBTablesConstruct extends Construct {
       workflowsTable: this.createWorkflowsTable(stage),
       executionsTable: this.createExecutionsTable(stage),
       profileEngramsTable: this.createProfileEngramsTable(stage),
+      userIdMappingsTable: this.createUserIdMappingsTable(stage),
     };
   }
 
@@ -179,6 +180,26 @@ export class DynamoDBTablesConstruct extends Construct {
       indexName: 'GSI2',
       partitionKey: { name: 'businessId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'lastInteraction', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
+
+    return table;
+  }
+
+  private createUserIdMappingsTable(stage: string): dynamodb.Table {
+    const table = new dynamodb.Table(this, 'UserIdMappingsTable', {
+      tableName: `SymenticUserIdMappings-${stage}`,
+      partitionKey: { name: 'primaryUserId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'alternateUserId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      pointInTimeRecovery: true,
+    });
+
+    // GSI for reverse lookup (find primary ID from alternate ID)
+    table.addGlobalSecondaryIndex({
+      indexName: 'AlternateUserIdIndex',
+      partitionKey: { name: 'alternateUserId', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
 

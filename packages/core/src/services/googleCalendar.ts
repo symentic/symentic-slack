@@ -72,7 +72,23 @@ export class GoogleCalendarService {
   }
 
   async getCalendarClient(userId: string) {
-    const tokens = await dynamoDBService.getCalendarToken(userId);
+    let tokens = await dynamoDBService.getCalendarToken(userId);
+    
+    // If no tokens or no refresh_token, check for user ID mapping
+    if (!tokens || !tokens.refresh_token) {
+      console.log(`No valid tokens for ${userId}, checking for user ID mapping...`);
+      const mapping = await dynamoDBService.getUserIdMapping(userId);
+      if (mapping) {
+        const alternateId = mapping.primaryUserId === userId ? mapping.alternateUserId : mapping.primaryUserId;
+        console.log(`Found mapping: ${userId} -> ${alternateId}`);
+        const altTokens = await dynamoDBService.getCalendarToken(alternateId);
+        if (altTokens && altTokens.refresh_token) {
+          console.log(`Using tokens from alternate ID ${alternateId}`);
+          tokens = altTokens;
+        }
+      }
+    }
+    
     if (!tokens) {
       throw new Error('No calendar tokens found for user');
     }
@@ -100,9 +116,12 @@ export class GoogleCalendarService {
   ): Promise<{ start: Date; end: Date }[]> {
     const timeMin = new Date();
     const timeMax = new Date();
-    timeMax.setDate(timeMax.getDate() + daysAhead);
+    // Extend search window if looking for slots
+    const extendedDays = Math.max(daysAhead, 3); // At least 3 days to find slots
+    timeMax.setDate(timeMax.getDate() + extendedDays);
     
     console.log(`Finding free/busy time for ${userIds.length} users from ${timeMin.toISOString()} to ${timeMax.toISOString()}`);
+    console.log('User IDs:', userIds);
 
     // Skip weekends
     const isWeekday = (date: Date) => {
@@ -115,24 +134,145 @@ export class GoogleCalendarService {
     // Get busy times for each user
     for (const userId of userIds) {
       try {
+        // First try the given user ID
         const calendar = await this.getCalendarClient(userId);
         console.log(`Querying calendar for user ${userId}`);
-        const response = await calendar.freebusy.query({
-          requestBody: {
+        console.log(`  Time range: ${timeMin.toISOString()} to ${timeMax.toISOString()}`);
+        console.log(`  In EDT: ${timeMin.toLocaleString('en-US', {timeZone: 'America/New_York'})} to ${timeMax.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+        
+        // First try to get events to verify calendar access
+        try {
+          const eventsResponse = await calendar.events.list({
+            calendarId: 'primary',
             timeMin: timeMin.toISOString(),
             timeMax: timeMax.toISOString(),
-            items: [{ id: 'primary' }],
-          },
-        });
-        console.log(`Calendar API response for ${userId}:`, JSON.stringify(response.data, null, 2));
-
-        const busy = response.data.calendars?.primary?.busy || [];
+            singleEvents: true,
+            orderBy: 'startTime',
+            maxResults: 10
+          });
+          console.log(`Calendar events.list found ${eventsResponse.data.items?.length || 0} events for ${userId}`);
+          if (eventsResponse.data.items && eventsResponse.data.items.length > 0) {
+            console.log('First few events:', eventsResponse.data.items.slice(0, 3).map(e => ({
+              summary: e.summary,
+              start: e.start?.dateTime || e.start?.date,
+              end: e.end?.dateTime || e.end?.date
+            })));
+          }
+        } catch (eventError) {
+          console.log(`Could not fetch events for ${userId}:`, eventError);
+        }
+        
+                // Skip freebusy entirely - use events.list directly like calendar-status  
+        console.log(`FORCED REBUILD: Using events.list approach directly for ${userId} (same as calendar-status)`);
+        
+        let busy: { start: string; end: string }[] = [];
+        
+        try {
+          // Use EXACT same parameters as calendar-status
+          const now = new Date();
+          const nextWeek = new Date();
+          nextWeek.setDate(nextWeek.getDate() + 7);
+          
+          console.log(`Fetching events for ${userId} from ${now.toISOString()} to ${nextWeek.toISOString()}`);
+          
+          // EXACT same call as calendar-status
+          const eventsResponse = await calendar.events.list({
+            calendarId: 'primary',
+            timeMin: now.toISOString(),
+            timeMax: nextWeek.toISOString(),
+            singleEvents: true,
+            orderBy: 'startTime',
+            maxResults: 5  // Same as calendar-status
+          });
+          
+          const events = eventsResponse.data.items || [];
+          console.log(`Found ${events.length} events for ${userId} using events.list directly`);
+          
+          // Log the raw events like calendar-status does
+          events.forEach((event, index) => {
+            console.log(`  Event ${index + 1}: ${event.summary || 'No title'}, start: ${event.start?.dateTime || event.start?.date}, end: ${event.end?.dateTime || event.end?.date}`);
+          });
+          
+          // Convert events to busy time slots - ANY event with dateTime becomes busy
+          const busyFromEvents = events
+            .filter(event => {
+              // Same logic as calendar-status - accept both dateTime and date
+              return (event.start?.dateTime || event.start?.date) && 
+                     (event.end?.dateTime || event.end?.date);
+            })
+            .map(event => ({
+              start: event.start?.dateTime || event.start?.date || '',
+              end: event.end?.dateTime || event.end?.date || ''
+            }));
+            
+          console.log(`Converted ${busyFromEvents.length} events to busy slots for ${userId}`);
+          busyFromEvents.forEach((slot, index) => {
+            console.log(`  Busy slot ${index + 1}: ${slot.start} - ${slot.end}`);
+          });
+          
+          busy = busyFromEvents;
+        } catch (eventsError) {
+          console.log(`Could not fetch events for ${userId}:`, eventsError);
+        }
+        
+        // If no busy slots found, check for user ID mapping and try alternate ID using events.list
+        if (busy.length === 0) {
+          console.log(`No busy slots for ${userId}, checking for user ID mapping...`);
+          const mapping = await dynamoDBService.getUserIdMapping(userId);
+          if (mapping) {
+            const alternateId = mapping.primaryUserId === userId ? mapping.alternateUserId : mapping.primaryUserId;
+            console.log(`Found mapping: ${userId} -> ${alternateId}, checking alternate calendar with events.list`);
+            
+            try {
+              const altCalendar = await this.getCalendarClient(alternateId);
+              // Use events.list for alternate ID too (no more freebusy)
+              const altNow = new Date();
+              const altNextWeek = new Date();
+              altNextWeek.setDate(altNextWeek.getDate() + 7);
+              
+              const altEventsResponse = await altCalendar.events.list({
+                calendarId: 'primary',
+                timeMin: altNow.toISOString(),
+                timeMax: altNextWeek.toISOString(),
+                singleEvents: true,
+                orderBy: 'startTime',
+                maxResults: 5
+              });
+              
+              const altEvents = altEventsResponse.data.items || [];
+              console.log(`Found ${altEvents.length} events for alternate ID ${alternateId}`);
+              
+              const altBusyFromEvents = altEvents
+                .filter(event => {
+                  return (event.start?.dateTime || event.start?.date) && 
+                         (event.end?.dateTime || event.end?.date);
+                })
+                .map(event => ({
+                  start: event.start?.dateTime || event.start?.date || '',
+                  end: event.end?.dateTime || event.end?.date || ''
+                }));
+                
+              if (altBusyFromEvents.length > 0) {
+                console.log(`Using ${altBusyFromEvents.length} busy slots from alternate ID ${alternateId}`);
+                busy = altBusyFromEvents;
+              }
+            } catch (altError) {
+              console.log(`Could not check alternate ID ${alternateId}:`, altError);
+            }
+          }
+        }
+        
         console.log(`User ${userId} has ${busy.length} busy slots`);
-        busy.forEach((slot) => {
-          console.log(`  Busy: ${slot.start} - ${slot.end}`);
+        busy.forEach((slot, index) => {
+          const busyStart = new Date(slot.start);
+          const busyEnd = new Date(slot.end);
+          console.log(`  Busy slot ${index + 1}: ${slot.start} - ${slot.end}`);
+          console.log(`    Parsed as: ${busyStart.toISOString()} - ${busyEnd.toISOString()}`);
+          console.log(`    In EDT: ${busyStart.toLocaleString('en-US', {timeZone: 'America/New_York'})} - ${busyEnd.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+          console.log(`    Timestamp range: ${busyStart.getTime()} - ${busyEnd.getTime()}`);
           allBusyTimes.push({
-            start: new Date(slot.start!),
-            end: new Date(slot.end!),
+            start: busyStart,
+            end: busyEnd,
           });
         });
       } catch (error) {
@@ -148,22 +288,77 @@ export class GoogleCalendarService {
     const workEnd = 17; // 5 PM EST
 
     // Start from current time but ensure it's within business hours
-    const currentTime = new Date(timeMin);
+    let currentTime = new Date(timeMin);
+    
+    // Check if we're on a weekend first
+    while (!isWeekday(currentTime)) {
+      currentTime.setDate(currentTime.getDate() + 1);
+      currentTime.setHours(8, 0, 0, 0); // Set to 8 AM on the next weekday
+    }
     
     // Convert to EST/EDT for business hours check
     const estTime = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
     const currentHourEST = estTime.getHours();
     
+    // Round to next 15-minute slot for more flexibility
+    const minutes = currentTime.getMinutes();
+    const roundedMinutes = Math.ceil(minutes / 15) * 15;
+    if (roundedMinutes === 60) {
+      currentTime.setHours(currentTime.getHours() + 1, 0, 0, 0);
+    } else {
+      currentTime.setMinutes(roundedMinutes, 0, 0);
+    }
+    
     // Adjust start time based on EST business hours
     if (currentHourEST >= workEnd) {
       // After 5 PM EST, start from next day 8 AM
       currentTime.setDate(currentTime.getDate() + 1);
-      currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
+      currentTime.setHours(8, 0, 0, 0);
+      // Skip weekend if next day is weekend
+      while (!isWeekday(currentTime)) {
+        currentTime.setDate(currentTime.getDate() + 1);
+      }
+      // Adjust to 8 AM ET
+      const nextDayEST = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
+      const hourDiff = 8 - nextDayEST.getHours();
+      if (hourDiff !== 0) {
+        currentTime.setHours(currentTime.getHours() + hourDiff);
+      }
     } else if (currentHourEST < workStart) {
-      // Before 8 AM EST, start from 8 AM today
-      currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
+      // Before 8 AM EST, start from 8 AM same day (not next day)
+      currentTime.setHours(8, 0, 0, 0);
+      // Adjust to 8 AM ET
+      const todayEST = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
+      const hourDiff = 8 - todayEST.getHours();
+      if (hourDiff !== 0) {
+        currentTime.setHours(currentTime.getHours() + hourDiff);
+      }
     }
 
+    console.log(`Starting slot search from: ${currentTime.toISOString()} (${currentTime.toLocaleString('en-US', {timeZone: 'America/New_York'})})`);
+    console.log(`Total busy times to check against: ${allBusyTimes.length}`);
+    allBusyTimes.forEach((busy, index) => {
+      console.log(`  Busy time ${index + 1}: ${busy.start.toISOString()} - ${busy.end.toISOString()}`);
+      console.log(`    In EDT: ${busy.start.toLocaleString('en-US', {timeZone: 'America/New_York'})} - ${busy.end.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+    });
+    
+    // Sort busy times by start time for easier debugging
+    allBusyTimes.sort((a, b) => a.start.getTime() - b.start.getTime());
+    
+    // Debug: Check specific morning slots
+    const debugDate = new Date(currentTime);
+    debugDate.setHours(13, 0, 0, 0); // 8 AM EDT = 13:00 UTC (during EDT)
+    console.log(`DEBUG: Checking if 8:00 AM EDT slot would conflict...`);
+    console.log(`  8 AM EDT as UTC: ${debugDate.toISOString()}`);
+    const wouldConflict8AM = allBusyTimes.some(busy => {
+      const busyStart = busy.start.getTime();
+      const busyEnd = busy.end.getTime();
+      const slot8AM = debugDate.getTime();
+      const slot8AMEnd = slot8AM + (30 * 60 * 1000);
+      return (slot8AM < busyEnd && slot8AMEnd > busyStart);
+    });
+    console.log(`  Would 8 AM EDT conflict? ${wouldConflict8AM}`);
+    
     while (currentTime < timeMax) {
       if (!isWeekday(currentTime)) {
         currentTime.setDate(currentTime.getDate() + 1);
@@ -181,30 +376,89 @@ export class GoogleCalendarService {
       if (slotEndEST.getHours() > workEnd || 
           (slotEndEST.getHours() === workEnd && slotEndEST.getMinutes() > 0) ||
           slotStartEST.getHours() < workStart) {
+        // Move to next day 8 AM
         currentTime.setDate(currentTime.getDate() + 1);
-        currentTime.setHours(workStart - (currentTime.getTimezoneOffset() / 60) + 5, 0, 0, 0); // Adjust for EST
+        currentTime.setHours(8, 0, 0, 0);
+        // Adjust to 8 AM ET
+        const nextDayEST = new Date(currentTime.toLocaleString("en-US", {timeZone: "America/New_York"}));
+        const hourDiff = 8 - nextDayEST.getHours();
+        if (hourDiff !== 0) {
+          currentTime.setHours(currentTime.getHours() + hourDiff);
+        }
         continue;
       }
 
       // Check if slot conflicts with any busy time
-      const hasConflict = allBusyTimes.some(busy => 
-        (currentTime >= busy.start && currentTime < busy.end) ||
-        (slotEnd > busy.start && slotEnd <= busy.end) ||
-        (currentTime <= busy.start && slotEnd >= busy.end)
-      );
+      const slotStartTime = currentTime.getTime();
+      const slotEndTime = slotEnd.getTime();
       
-      if (hasConflict && freeSlots.length < 5) {
+      const hasConflict = allBusyTimes.some(busy => {
+        const busyStartTime = busy.start.getTime();
+        const busyEndTime = busy.end.getTime();
+        
+        // Check for any overlap between the proposed slot and busy time
+        return (slotStartTime < busyEndTime && slotEndTime > busyStartTime);
+      });
+      
+      if (hasConflict) {
         console.log(`Slot ${currentTime.toISOString()} - ${slotEnd.toISOString()} has conflict`);
+        console.log(`  In EDT: ${currentTime.toLocaleString('en-US', {timeZone: 'America/New_York'})} - ${slotEnd.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+        // Find which busy time it conflicts with
+        const conflictingBusy = allBusyTimes.find(busy => {
+          const busyStartTime = busy.start.getTime();
+          const busyEndTime = busy.end.getTime();
+          return (slotStartTime < busyEndTime && slotEndTime > busyStartTime);
+        });
+        if (conflictingBusy) {
+          console.log(`  Conflicts with busy time: ${conflictingBusy.start.toISOString()} - ${conflictingBusy.end.toISOString()}`);
+          console.log(`    In EDT: ${conflictingBusy.start.toLocaleString('en-US', {timeZone: 'America/New_York'})} - ${conflictingBusy.end.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+          
+          // Jump to the end of the conflicting busy period instead of incrementing by 15 minutes
+          // This helps find slots between meetings (e.g., 2:15-3:00 PM)
+          const busyEndTime = conflictingBusy.end.getTime();
+          const currentTimeMs = currentTime.getTime();
+          if (busyEndTime > currentTimeMs) {
+            console.log(`  Jumping to end of busy period: ${conflictingBusy.end.toISOString()}`);
+            currentTime = new Date(conflictingBusy.end);
+            continue; // Skip the normal increment
+          }
+        }
       }
 
       if (!hasConflict) {
+        const slotTimeEDT = currentTime.toLocaleString('en-US', {timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit', hour12: false});
+        console.log(`Slot ${currentTime.toISOString()} - ${slotEnd.toISOString()} is FREE`);
+        console.log(`  In EDT: ${currentTime.toLocaleString('en-US', {timeZone: 'America/New_York'})} - ${slotEnd.toLocaleString('en-US', {timeZone: 'America/New_York'})}`);
+        
+        // Special logging for morning slots
+        if (slotTimeEDT.startsWith('08:') || slotTimeEDT.startsWith('09:') || slotTimeEDT.startsWith('10:')) {
+          console.log(`  ⚠️ MORNING SLOT MARKED AS FREE: ${slotTimeEDT}`);
+          console.log(`  This slot was checked against ${allBusyTimes.length} busy times`);
+          // Check if any busy times overlap with this specific slot
+          const overlappingBusy = allBusyTimes.filter(busy => {
+            const busyStart = busy.start.getTime();
+            const busyEnd = busy.end.getTime();
+            return (slotStartTime < busyEnd && slotEndTime > busyStart);
+          });
+          console.log(`  Overlapping busy times: ${overlappingBusy.length}`);
+          overlappingBusy.forEach(busy => {
+            console.log(`    Busy: ${busy.start.toISOString()} - ${busy.end.toISOString()}`);
+          });
+        }
+        
         freeSlots.push({
           start: new Date(currentTime),
           end: new Date(slotEnd),
         });
+        
+        // Limit free slots to prevent too many options
+        if (freeSlots.length >= 20) {
+          console.log('Reached 20 free slots, stopping search');
+          break;
+        }
       }
 
-      currentTime.setMinutes(currentTime.getMinutes() + 15); // Check every 15 minutes
+      currentTime.setMinutes(currentTime.getMinutes() + 30); // Check every 30 minutes to avoid too many small increments
     }
 
     console.log(`Found ${freeSlots.length} free slots after checking ${allBusyTimes.length} busy times`);

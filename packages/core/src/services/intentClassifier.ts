@@ -49,37 +49,6 @@ export class IntentClassifier {
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
     const { message, userId, channelId, recentContext, threadContext } = options;
     
-    // Pattern-based bug detection for common bug report phrases
-    const bugPatterns = [
-      /\b(error|errors)\s+(with|in)\s+\w+/i,
-      /\b(payment|login|system|feature|api|server)\s+(error|issue|problem|bug)/i,
-      /\b(error|issue|problem|bug)\s+(with|in)\s+(the\s+)?(payment|login|system|feature|api|server)/i,
-      /\b(not\s+working|broken|crashed|down|failed|failing)\b/i,
-      /\b(bug:|issue:|error:|problem:)/i,
-      /\bcannot\s+(login|pay|access|connect)/i,
-      /\bunable\s+to\s+(login|pay|access|connect)/i,
-      // More flexible patterns for typos and variations
-      /\berror\s+with.{0,10}(payment|system|login|api)/i,
-      /\b(there\s+is|there's|theres)\s+(an?\s+)?(error|issue|problem|bug)/i,
-      /\b(payment|system|login|api).{0,10}(error|issue|problem|not\s+work)/i,
-      // Ultra-flexible patterns for common typos
-      /error.*payment/i,
-      /payment.*error/i,
-      /error.*system/i,
-      /system.*error/i,
-      // New patterns for "bug with/in [system]"
-      /\bbug\s+(with|in)\s+(the\s+)?(payment|login|system|feature|api|server)/i,
-      /\b(payment|login|system|feature|api|server).*bug/i,
-      /\bbug.*\b(payment|login|system|feature|api|server)/i
-    ];
-    
-    const lowerMessage = message.toLowerCase();
-    const isBugReport = bugPatterns.some(pattern => pattern.test(lowerMessage));
-    
-    if (isBugReport) {
-      console.log('Pattern match detected for bug report!');
-    }
-    
     // Quick filter disabled for demo - let ChatGPT handle all classification
     // const insectPatterns = [
     //   /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
@@ -101,8 +70,8 @@ export class IntentClassifier {
     const model = this.selectModel(message);
 
     const systemPrompt = `You are an intent classifier for a Slack bot that helps with software development tasks. Analyze the message and extract:
-1. Primary intent (use dot notation like "calendar.schedule", "bug.report", "task.create")
-2. Confidence level (0-1)
+1. Intent (use dot notation like "calendar.schedule", "bug.report", "task.create")
+2. Confidence score (0-1)
 3. Entities (participants, dates, priorities, etc.)
 4. Any missing required information
 
@@ -113,6 +82,12 @@ Available intents:
 - reminder.set, reminder.list
 - general.help, general.status, general.greeting, general.chatter, general.cancel
 - query.search, query.ask
+
+CRITICAL: Return JSON with these EXACT field names:
+- "intent" (NOT "primary_intent")
+- "confidence" (NOT "confidence_level")
+- "entities" (object with extracted entities)
+- "missingInfo" (NOT "missing_information")
 
 IMPORTANT: "bug.report" is ONLY for software bugs, coding errors, system issues, or technical problems.
 DO NOT classify as "bug.report" for:
@@ -138,55 +113,68 @@ Special handling:
 
 Intent classification rules:
 - Classify as bug.report when message contains: "error", "bug", "issue", "problem", "broken", "not working", "failed", "crash", "down" in technical context
-- Phrases like "error with [system]", "[system] error", "[feature] not working" are strong bug indicators
+- Phrases like "error with [system]", "[system] error", "[feature] not working", "bug with [feature]", "bug in [system]", "I found a bug", "found a bug with" are strong bug indicators
+- Messages starting with "I found a bug" should ALWAYS be classified as bug.report
 - Only use general.greeting if the bot is specifically mentioned (e.g., "@symentic hi", "hello symentic")
 - Only use general.help when explicitly asking what the bot can do
 - For greetings without bot mention (just "hi", "hello"), use general.chatter
 - When unsure or message is ambiguous, use general.chatter
 - Set confidence < 0.5 for unclear intents
 
-Respond in JSON format only.`;
+Respond with EXACTLY this JSON format:
+{
+  "intent": "bug.report",
+  "confidence": 0.9,
+  "entities": {},
+  "missingInfo": []
+}
+
+IMPORTANT: Use these exact field names: "intent", "confidence", "entities", "missingInfo"`;
 
     const userPrompt = `Message: "${message}"
 User: ${userId}
 Channel: ${channelId}
 ${recentContext ? `Recent context: ${recentContext.join(' | ')}` : ''}
-${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}
-${isBugReport ? 'CRITICAL: This message matches bug report patterns. You MUST classify as "bug.report" with confidence >= 0.8 unless it explicitly mentions physical insects.' : ''}`;
+${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}`;
 
     try {
+      console.log(`Calling OpenAI intent classification with model: ${model}`);
       const response = await openAIService.classifyWithModel(
         systemPrompt,
         userPrompt,
         model
       );
+      console.log(`OpenAI response:`, response);
+      
+      if (!response) {
+        throw new Error('Empty response from OpenAI');
+      }
 
       const classification = JSON.parse(response);
       
-      console.log(`AI Classification: ${classification.intent} (${classification.confidence}), Pattern match: ${isBugReport}`);
-      
-      // Override classification if pattern strongly matches bug report but AI misclassified
-      if (isBugReport && classification.intent !== 'bug.report') {
-        console.log(`Pattern override: Forcing bug.report classification (was ${classification.intent})`);
-        return {
-          intent: 'bug.report',
-          confidence: Math.max(0.8, classification.confidence),
-          entities: classification.entities || {},
-          modelUsed: model,
-          requiresFollowUp: classification.missingInfo || []
-        };
+      if (!classification || typeof classification !== 'object') {
+        throw new Error('Invalid classification format from OpenAI');
       }
+      
+      // Handle both old and new field names from OpenAI
+      const intent = classification.intent || classification.primary_intent;
+      const confidence = classification.confidence || classification.confidence_level;
+      const missingInfo = classification.missingInfo || classification.missing_information || [];
+      
+      console.log(`AI Classification: ${intent} (${confidence})`);
       
       // Ensure all required fields
       return {
-        intent: classification.intent || 'general.help',
-        confidence: classification.confidence || 0.5,
+        intent: intent || 'general.help',
+        confidence: confidence || 0.5,
         entities: classification.entities || {},
         modelUsed: model,
-        requiresFollowUp: classification.missingInfo || []
+        requiresFollowUp: missingInfo
       };
     } catch (error) {
       console.error('Intent classification failed:', error);
+      console.error('Error details:', error instanceof Error ? error.message : 'Unknown error');
+      console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
       
       // Fallback classification
       return {

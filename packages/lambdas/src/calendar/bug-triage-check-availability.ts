@@ -15,9 +15,12 @@ interface CheckAvailabilityEvent {
   bugReport?: {
     Payload?: {
       severity?: string;
+      reportedBy?: string;
     };
     severity?: string;
+    reportedBy?: string;
   };
+  reporterId?: string;
 }
 
 interface AvailabilityResult {
@@ -38,25 +41,33 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
   const engineersPayload = event.engineers as { Payload?: Array<{ userId: string; name: string }> } | undefined;
   const engineers = engineersPayload?.Payload || event.engineers || [];
   
-  // Extract severity from bug report
-  const bugReportPayload = event.bugReport as { Payload?: { severity?: string }; severity?: string } | undefined;
+  // Extract severity and reportedBy from bug report
+  const bugReportPayload = event.bugReport as { Payload?: { severity?: string; reportedBy?: string }; severity?: string; reportedBy?: string } | undefined;
   const severity = bugReportPayload?.Payload?.severity || bugReportPayload?.severity || 'medium';
+  const reportedBy = event.reporterId || bugReportPayload?.Payload?.reportedBy || bugReportPayload?.reportedBy;
   
   try {
     // Determine urgency based on severity
     const urgency = severity === 'critical' || severity === 'high' ? 'high' : 'medium';
     const daysAhead = urgency === 'high' ? 1 : 3; // Critical/high = next 24h, others = next 3 days
     
-    // Get engineer user IDs
+    // Get all user IDs including engineers and reporter
     const engineerUserIds = (engineers as Array<{ userId: string; name: string }>).map(e => e.userId);
+    const allUserIds = reportedBy && !engineerUserIds.includes(reportedBy) 
+      ? [...engineerUserIds, reportedBy] 
+      : engineerUserIds;
     
-    // For each engineer, check if they have calendar tokens
+    console.log('Checking availability for users:', allUserIds);
+    
+    // For each user (engineers + reporter), check if they have calendar tokens
     const engineersWithCalendar: string[] = [];
     const engineersWithoutCalendar: string[] = [];
     
-    for (const userId of engineerUserIds) {
+    for (const userId of allUserIds) {
       try {
+        // Try to get calendar token for this user
         const hasToken = await dynamoDBService.getCalendarToken(userId);
+        
         if (hasToken) {
           // Check if token has refresh_token
           if (!hasToken.refresh_token) {
@@ -66,10 +77,22 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
             engineersWithCalendar.push(userId);
           }
         } else {
-          engineersWithoutCalendar.push(userId);
+          // Try to find a user ID mapping
+          const mapping = await dynamoDBService.getUserIdMapping(userId);
+          if (mapping && mapping.alternateUserId) {
+            console.log(`No token for ${userId}, trying alternate ID ${mapping.alternateUserId}`);
+            const altToken = await dynamoDBService.getCalendarToken(mapping.alternateUserId);
+            if (altToken && altToken.refresh_token) {
+              engineersWithCalendar.push(mapping.alternateUserId);
+            } else {
+              engineersWithoutCalendar.push(userId);
+            }
+          } else {
+            engineersWithoutCalendar.push(userId);
+          }
         }
       } catch (error) {
-        console.log(`No calendar token for user ${userId}`);
+        console.log(`Error checking calendar token for user ${userId}:`, error);
         engineersWithoutCalendar.push(userId);
       }
     }
@@ -78,7 +101,7 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     console.log('Engineers without calendar:', engineersWithoutCalendar);
     
     // Debug: Show calendar tokens status
-    for (const userId of engineerUserIds) {
+    for (const userId of allUserIds) {
       try {
         const token = await dynamoDBService.getCalendarToken(userId);
         console.log(`User ${userId} calendar token exists:`, !!token);
@@ -90,12 +113,12 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
       }
     }
     
-    // If no engineers have calendar connected, return default slots with auth URL
+    // If no users have calendar connected, return default slots with auth URL
     if (engineersWithCalendar.length === 0) {
-      const result = getDefaultSlots(engineerUserIds, urgency);
+      const result = getDefaultSlots(allUserIds, urgency);
       
       // Generate auth URL for calendar connection
-      const authUrl = await googleCalendarService.getAuthUrl(engineerUserIds[0]);
+      const authUrl = await googleCalendarService.getAuthUrl(allUserIds[0]);
       
       return {
         ...result,
@@ -104,13 +127,18 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
       };
     }
     
-    // Get free/busy time for engineers with calendar
+    // Get free/busy time for all users with calendar
+    console.log(`Calling findFreeBusyTime with users: ${engineersWithCalendar.join(', ')}`);
     const freeSlots = await googleCalendarService.findFreeBusyTime(
       engineersWithCalendar,
       daysAhead
     );
     
     console.log(`Found ${freeSlots.length} potential free slots`);
+    // Log first few slots for debugging
+    freeSlots.slice(0, 5).forEach((slot, i) => {
+      console.log(`  Slot ${i + 1}: ${slot.start.toISOString()} - ${slot.end.toISOString()}`);
+    });
     
     // Convert to our format and find best slots
     const availableSlots: SlotWithEngineers[] = freeSlots.map(slot => ({
@@ -126,10 +154,10 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
       });
     }
     
-    // Sort slots by completeness (slots where all engineers are available first)
+    // Sort slots by completeness (slots where all users are available first)
     availableSlots.sort((a, b) => {
-      const aComplete = a.availableEngineers.length === engineerUserIds.length;
-      const bComplete = b.availableEngineers.length === engineerUserIds.length;
+      const aComplete = a.availableEngineers.length === allUserIds.length;
+      const bComplete = b.availableEngineers.length === allUserIds.length;
       if (aComplete && !bComplete) return -1;
       if (!aComplete && bComplete) return 1;
       // Then sort by time (earliest first)
@@ -142,10 +170,22 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     // If no slots found from calendar, fall back to default slots
     if (topSlots.length === 0) {
       console.log('No calendar slots found, using default slots');
-      const defaultResult = getDefaultSlots(engineerUserIds, urgency === 'high' ? 'high' : 'medium');
+      console.log('WARNING: Calendar integration returned no free slots. This usually means:');
+      console.log('  1. All time slots are busy (unlikely for a full day)');
+      console.log('  2. Calendar permissions may be limited');
+      console.log('  3. Calendar events are not being properly fetched');
+      
+      // If we have calendar-connected users but got no data, add a warning
+      if (engineersWithCalendar.length > 0) {
+        console.log(`ALERT: ${engineersWithCalendar.length} users have calendars connected but no busy times were found.`);
+        console.log('This suggests a potential issue with calendar permissions or API access.');
+      }
+      
+      const defaultResult = getDefaultSlots(allUserIds, urgency === 'high' ? 'high' : 'medium');
       return {
         ...defaultResult,
-        engineersWithoutCalendar: engineersWithoutCalendar.length > 0 ? engineersWithoutCalendar : undefined
+        engineersWithoutCalendar: engineersWithoutCalendar.length > 0 ? engineersWithoutCalendar : undefined,
+        calendarDataWarning: engineersWithCalendar.length > 0 ? 'No available time slots found in calendars - showing default business hours' : undefined
       };
     }
     
@@ -156,7 +196,12 @@ export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = asyn
     };
   } catch (error) {
     console.error('Error checking availability:', error);
-    return getDefaultSlots((engineers as Array<{ userId: string; name: string }>).map(e => e.userId), event.urgency || 'medium');
+    // Get all user IDs for default slots
+    const engineerUserIds = (engineers as Array<{ userId: string; name: string }>).map(e => e.userId);
+    const defaultUserIds = reportedBy && !engineerUserIds.includes(reportedBy) 
+      ? [...engineerUserIds, reportedBy] 
+      : engineerUserIds;
+    return getDefaultSlots(defaultUserIds, event.urgency || 'medium');
   }
 };
 

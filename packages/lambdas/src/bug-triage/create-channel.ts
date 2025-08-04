@@ -1,6 +1,5 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
-import { bugCounterService } from '@symentic/core';
 import { extractPayload, extractArrayPayload } from '../utils/step-functions';
 
 interface CreateChannelEvent {
@@ -35,10 +34,16 @@ interface CreateChannelEvent {
     Payload?: Array<{
       userId: string;
       name: string;
+      title?: string;
+      bio?: string;
+      assignmentReason?: string;
     }>;
   } | Array<{
     userId: string;
     name: string;
+    title?: string;
+    bio?: string;
+    assignmentReason?: string;
   }>;
   workspaceId: string;
 }
@@ -51,7 +56,6 @@ interface ChannelResult {
 }
 
 export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event) => {
-  console.log('Creating/updating triage channel:', JSON.stringify(event, null, 2));
   
   // Handle Step Functions nested payload structure
   const bugReport = extractPayload(event.bugReport);
@@ -80,9 +84,9 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
       
       console.log('Using existing channel for duplicate bug:', channelName);
     } else {
-      // Get next bug number if not provided
+      // Bug number should already be assigned by analyze step
       if (!bugNumber) {
-        bugNumber = await bugCounterService.getNextBugNumber(event.workspaceId);
+        throw new Error('Bug number not provided - should be assigned in analyze step');
       }
       
       channelName = `bug-${bugNumber}`;
@@ -112,8 +116,9 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
               exclude_archived: true
             });
             
+            const targetName = attemptCount === 0 ? channelName : `${channelName}-${attemptCount}`;
             const existingChannel = existingChannels.channels?.find(
-              ch => ch.name === (attemptCount === 0 ? channelName : `${channelName}-${attemptCount}`)
+              ch => ch.name === targetName
             );
             
             if (existingChannel) {
@@ -148,15 +153,14 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           users: userIds.join(',')
         });
       } catch (error: any) {
-        // Users might already be in channel if reusing
-        console.log('Error inviting users (might already be members):', error?.data?.error);
+        // Users might already be in channel if reusing - this is expected
       }
     }
     
     // Post bug overview (for new channels or updates to existing)
     const overviewMessage = await slack.chat.postMessage({
       channel: channelId!,
-      blocks: createBugOverviewBlocks(bugReport, engineers as Array<{userId: string; name: string}>, bugNumber, isExisting)
+      blocks: createBugOverviewBlocks(bugReport, engineers, bugNumber, isExisting)
     });
     
     // Pin the overview message for easy reference
@@ -167,7 +171,7 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           timestamp: overviewMessage.ts
         });
       } catch (error) {
-        console.log('Error pinning message:', error);
+        // Pinning might fail due to permissions - non-critical
       }
     }
     
@@ -178,14 +182,19 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
       bugNumber
     };
   } catch (error) {
-    console.error('Error creating channel:', error);
     throw error;
   }
 };
 
 function createBugOverviewBlocks(
   bugReport: any,
-  engineers: any[] | undefined,
+  engineers: Array<{
+    userId: string;
+    name: string;
+    title?: string;
+    bio?: string;
+    assignmentReason?: string;
+  }> | undefined,
   bugNumber?: number,
   isUpdate = false
 ): any[] {
@@ -272,7 +281,7 @@ function createBugOverviewBlocks(
     });
   }
   
-  // Add assigned engineers
+  // Add assigned engineers with detailed information
   if (engineers && engineers.length > 0) {
     blocks.push(
       {
@@ -282,10 +291,49 @@ function createBugOverviewBlocks(
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `*Assigned Engineers:*\n${engineers.map((e: any) => `• <@${e.userId}> - ${e.name}`).join('\n')}`
+          text: '*🎯 Assigned Engineers:*\n_Based on our analysis and engineer expertise, the following team members have been assigned to this issue:_'
         }
       }
     );
+    
+    // Add each engineer with their details
+    engineers.forEach((engineer: any) => {
+      const engineerBlocks: any[] = [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `*<@${engineer.userId}>* - ${engineer.name}${engineer.title ? ` (${engineer.title})` : ''}`
+          }
+        }
+      ];
+      
+      if (engineer.bio) {
+        engineerBlocks.push({
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: `_${engineer.bio}_`
+            }
+          ]
+        });
+      }
+      
+      if (engineer.assignmentReason) {
+        engineerBlocks.push({
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: `📌 *Why assigned:* ${engineer.assignmentReason}`
+            }
+          ]
+        });
+      }
+      
+      blocks.push(...engineerBlocks);
+    });
   }
   
   // Add duplicate notice if applicable

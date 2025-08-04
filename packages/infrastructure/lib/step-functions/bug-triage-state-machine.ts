@@ -49,7 +49,8 @@ export class BugTriageStateMachine extends Construct {
     return {
       analyzeBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'AnalyzeBugReport', {
         lambdaFunction: lambdaFunctions.bugAnalyze,
-        resultPath: '$.analysis',
+        resultPath: '$',
+        outputPath: '$.Payload',
       }),
 
       generateFollowUpQuestions: new stepfunctionsTasks.LambdaInvoke(this, 'GenerateFollowUpQuestions', {
@@ -102,18 +103,16 @@ export class BugTriageStateMachine extends Construct {
         resultPath: '$.bugReport',
       }),
 
-      updateSeverityIfEmergency: new stepfunctionsTasks.LambdaInvoke(this, 'UpdateSeverityIfEmergency', {
-        lambdaFunction: lambdaFunctions.bugUpdate,
-        payload: stepfunctions.TaskInput.fromObject({
-          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
-          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
-        }),
-        resultPath: '$.bugReport',
-      }),
+      // Removed - now handled in analyze Lambda
 
       findRelevantEngineers: new stepfunctionsTasks.LambdaInvoke(this, 'FindRelevantEngineers', {
         lambdaFunction: lambdaFunctions.bugFindEngineers,
         resultPath: '$.engineers',
+      }),
+
+      enhanceBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'EnhanceBugReport', {
+        lambdaFunction: lambdaFunctions.bugEnhance,
+        resultPath: '$.bugReport',
       }),
 
       createTriageChannel: new stepfunctionsTasks.LambdaInvoke(this, 'CreateTriageChannel', {
@@ -199,17 +198,7 @@ export class BugTriageStateMachine extends Construct {
         },
       }),
 
-      setEnhancedBugReport: new stepfunctions.Pass(this, 'SetEnhancedBugReport', {
-        parameters: {
-          'bugReport.$': '$.analysis.Payload.enhancedBugReport',
-          'context.$': '$.context',
-          'threadTs.$': '$.threadTs',
-          'bugId.$': '$.analysis.Payload.bugId',
-          'analysis.$': '$.analysis',
-          'attemptCount.$': '$.attemptCount',
-          'conversationHistory.$': '$.conversationHistory',
-        },
-      }),
+      // Removed - now handled in analyze Lambda
 
       bugTriageComplete: new stepfunctions.Succeed(this, 'BugTriageComplete'),
       bugReportCancelled: new stepfunctions.Succeed(this, 'BugReportCancelled'),
@@ -229,7 +218,7 @@ export class BugTriageStateMachine extends Construct {
       checkMaxAttempts: new stepfunctions.Choice(this, 'CheckMaxAttempts'),
       checkIfHighSeverity: new stepfunctions.Choice(this, 'CheckIfHighSeverity'),
       checkUpdatedCompleteness: new stepfunctions.Choice(this, 'CheckUpdatedCompleteness'),
-      checkIfHasQuestions: new stepfunctions.Choice(this, 'CheckIfHasQuestions'),
+      // Removed - always send questions
     };
   }
 
@@ -256,7 +245,7 @@ export class BugTriageStateMachine extends Construct {
     states.checkMaxAttempts
       .when(
         stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
-        tasks.analyzeBugReport // Go through analyze to ensure proper data structure
+        tasks.analyzeBugReport
       )
       .otherwise(tasks.analyzeBugReport);
 
@@ -285,22 +274,13 @@ export class BugTriageStateMachine extends Construct {
       )
       .otherwise(tasks.saveBugReport);
 
-    // Chain the tasks
+    // Simplified chain - analyze does everything
     tasks.analyzeBugReport
-      .next(tasks.updateSeverityIfEmergency)
-      .next(states.setEnhancedBugReport)
       .next(states.checkReportQuality);
     
-    // Add check for empty questions array
-    states.checkIfHasQuestions
-      .when(
-        stepfunctions.Condition.isPresent('$.questions.Payload.questions[0]'),
-        tasks.sendQuestionsToSlack
-      )
-      .otherwise(tasks.findRelevantEngineers);
-    
+    // Go straight from questions to sending
     tasks.generateFollowUpQuestions
-      .next(states.checkIfHasQuestions);
+      .next(tasks.sendQuestionsToSlack);
       
     tasks.sendQuestionsToSlack
       .next(tasks.waitForUserResponse)
@@ -324,7 +304,9 @@ export class BugTriageStateMachine extends Construct {
 
     tasks.maxAttemptsReached.next(states.bugReportFailed);
 
-    tasks.findRelevantEngineers.next(states.checkIfHighSeverity);
+    tasks.findRelevantEngineers
+      .next(tasks.enhanceBugReport)
+      .next(states.checkIfHighSeverity);
 
     tasks.createTriageChannel
       .next(tasks.checkCalendarAvailability)

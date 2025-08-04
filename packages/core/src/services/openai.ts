@@ -55,6 +55,49 @@ export class OpenAIService {
   }
 
   // Analyze bug report quality and generate follow-up questions
+  async detectBugSeverity(bugInfo: {
+    description: string;
+    impact?: string;
+    errorMessages?: string;
+  }): Promise<{
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    isEmergency: boolean;
+    category?: string;
+  }> {
+    const systemPrompt = `You are a bug severity detector. Quickly determine the severity and emergency status of a bug report.
+
+Severity levels:
+- "critical": Platform down, all users affected, data loss, security breach
+- "high": Major feature broken, many users affected, payment/login issues
+- "medium": Feature partially working, some users affected
+- "low": Minor issue, cosmetic bug
+
+Emergency indicators:
+- Words like: down, broken, can't access, all users, emergency, urgent, critical
+- Payment/checkout failures
+- Login/authentication failures
+- Data loss or corruption
+
+Respond with JSON: {"severity": "high", "isEmergency": false, "category": "Backend"}`;
+
+    const userPrompt = `Bug: ${bugInfo.description}
+${bugInfo.impact ? `Impact: ${bugInfo.impact}` : ''}
+${bugInfo.errorMessages ? `Errors: ${bugInfo.errorMessages}` : ''}`;
+
+    try {
+      const response = await this.classifyWithModel(systemPrompt, userPrompt, 'gpt-4o-mini');
+      return JSON.parse(response);
+    } catch (error) {
+      console.error('Severity detection failed:', error);
+      // Default to medium severity
+      return {
+        severity: 'medium',
+        isEmergency: false,
+        category: 'General'
+      };
+    }
+  }
+
   async analyzeBugReportQuality(bugInfo: {
     description: string;
     reproductionSteps?: string;

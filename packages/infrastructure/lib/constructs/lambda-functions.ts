@@ -44,6 +44,7 @@ export class LambdaFunctionsConstruct extends Construct {
       { name: 'bugQuestions', entry: 'src/bug-triage/questions.ts', handler: 'handler' },
       { name: 'bugProcessResponse', entry: 'src/bug-triage/process-response.ts', handler: 'handler' },
       { name: 'bugUpdate', entry: 'src/bug-triage/update-bug.ts', handler: 'handler' },
+      { name: 'bugEnhance', entry: 'src/bug-triage/enhance.ts', handler: 'handler' },
       { name: 'bugFindEngineers', entry: 'src/bug-triage/find-engineers.ts', handler: 'handler' },
       { name: 'bugCreateChannel', entry: 'src/bug-triage/create-channel.ts', handler: 'handler' },
       { name: 'bugSave', entry: 'src/bug-triage/save-bug.ts', handler: 'handler' },
@@ -163,6 +164,7 @@ export class LambdaFunctionsConstruct extends Construct {
       WORKFLOWS_TABLE: tables.workflowsTable.tableName,
       EXECUTIONS_TABLE: tables.executionsTable.tableName,
       PROFILE_ENGRAMS_TABLE: tables.profileEngramsTable.tableName,
+      USER_ID_MAPPINGS_TABLE: tables.userIdMappingsTable.tableName,
       BUG_RESPONSE_QUEUE_URL: bugResponseQueue.queueUrl,
     };
 

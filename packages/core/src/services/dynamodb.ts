@@ -198,6 +198,60 @@ export class DynamoDBService {
     return result.Item?.tokens || null;
   }
 
+  // User ID mapping management
+  async saveUserIdMapping(primaryUserId: string, alternateUserId: string, context?: Record<string, unknown>): Promise<void> {
+    const params = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      Item: {
+        primaryUserId,
+        alternateUserId,
+        context,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    await this.docClient.send(new PutCommand(params));
+  }
+
+  async getUserIdMapping(userId: string): Promise<{ primaryUserId: string; alternateUserId: string } | null> {
+    // First try to find if this is a primary user ID
+    const primaryParams = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      KeyConditionExpression: 'primaryUserId = :userId',
+      ExpressionAttributeValues: {
+        ':userId': userId,
+      },
+    };
+    
+    const primaryResult = await this.docClient.send(new QueryCommand(primaryParams));
+    if (primaryResult.Items && primaryResult.Items.length > 0) {
+      return {
+        primaryUserId: userId,
+        alternateUserId: primaryResult.Items[0].alternateUserId,
+      };
+    }
+
+    // If not found as primary, check if it's an alternate ID
+    const alternateParams = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      IndexName: 'AlternateUserIdIndex',
+      KeyConditionExpression: 'alternateUserId = :userId',
+      ExpressionAttributeValues: {
+        ':userId': userId,
+      },
+    };
+
+    const alternateResult = await this.docClient.send(new QueryCommand(alternateParams));
+    if (alternateResult.Items && alternateResult.Items.length > 0) {
+      return {
+        primaryUserId: alternateResult.Items[0].primaryUserId,
+        alternateUserId: userId,
+      };
+    }
+
+    return null;
+  }
+
   // Meeting management
   async saveMeeting(meeting: Omit<Meeting, 'meetingId'>): Promise<string> {
     const meetingId = uuidv4();

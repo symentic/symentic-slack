@@ -17,6 +17,9 @@ export { profileEngramService } from './services/profileEngramService';
 export { bugCounterService } from './services/bugCounterService';
 export { bugSimilarityService } from './services/bugSimilarityService';
 
+// Utils
+export { getUserEmail } from './utils/emailMapping';
+
 // Agents
 export { BaseAgent } from './agents/base/BaseAgent';
 export { BugTriageAgent } from './agents/bugTriageAgent';
