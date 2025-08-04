@@ -1,5 +1,6 @@
 import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
+import { WebClient } from '@slack/web-api';
 
 interface BugReportData {
   description: string;
@@ -36,6 +37,13 @@ interface GenerateQuestionsEvent {
   };
   attemptCount: number;
   conversationHistory?: ConversationPair[];
+  context?: {
+    userId: string;
+    channelId: string;
+    teamId: string;
+    slackClient?: string;
+  };
+  threadTs?: string;
 }
 
 interface QuestionsResult {
@@ -52,6 +60,8 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
   const analysisData = event.analysis?.Payload || event.analysis || {};
   
   try {
+    // Initialize Slack client if context provided
+    const slack = event.context ? new WebClient(event.context.slackClient || process.env.SLACK_BOT_TOKEN) : null;
     // Stop after 3 attempts (3 questions)
     if (event.attemptCount >= 3) {
       return {
@@ -104,6 +114,60 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
     // HARDCODED: Stop after exactly 3 questions
     const hasExactlyThreeQuestions = conversationHistory.length >= 3;
     const shouldStop = hasExactlyThreeQuestions; // Always stop after 3 questions
+    
+    // Send to Slack if we have context and questions
+    if (slack && event.context && event.threadTs && !shouldStop && questions.length > 0) {
+      const acknowledgment = result.acknowledgment || '';
+      
+      // Build natural message
+      let messageText = acknowledgment;
+      if (questions.length > 0 && messageText && !messageText.includes('?')) {
+        messageText += ' ' + questions[0];
+      } else if (questions.length > 0 && !messageText) {
+        messageText = questions[0];
+      }
+      
+      const blocks: any[] = [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: messageText
+          }
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: '_Feel free to answer in any order, or type "cancel" if you want to stop._'
+            }
+          ]
+        }
+      ];
+      
+      try {
+        await slack.chat.postMessage({
+          channel: event.context.channelId,
+          thread_ts: event.threadTs,
+          blocks
+        });
+      } catch (slackError) {
+        console.error('Failed to send Slack message:', slackError);
+        // Continue anyway - the state machine will handle the notification separately if needed
+      }
+    } else if (slack && event.context && event.threadTs && shouldStop) {
+      // Send completion message
+      try {
+        await slack.chat.postMessage({
+          channel: event.context.channelId,
+          thread_ts: event.threadTs,
+          text: "Great! I've collected enough information to create your bug report. Let me process this now..."
+        });
+      } catch (slackError) {
+        console.error('Failed to send completion message:', slackError);
+      }
+    }
     
     return {
       acknowledgment: result.acknowledgment,

@@ -59,11 +59,13 @@ export class BugTriageStateMachine extends Construct {
           bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
           analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
           attemptCount: stepfunctions.JsonPath.objectAt('$.attemptCount'),
-          conversationHistory: stepfunctions.JsonPath.objectAt('$.conversationHistory')
+          conversationHistory: stepfunctions.JsonPath.objectAt('$.conversationHistory'),
+          context: stepfunctions.JsonPath.objectAt('$.context'),
+          threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
         }),
         resultPath: '$.questions',
       }),
-
+      
       sendQuestionsToSlack: new stepfunctionsTasks.LambdaInvoke(this, 'SendQuestionsToSlack', {
         lambdaFunction: lambdaFunctions.slackNotify,
         payload: stepfunctions.TaskInput.fromObject({
@@ -278,11 +280,8 @@ export class BugTriageStateMachine extends Construct {
     tasks.analyzeBugReport
       .next(states.checkReportQuality);
     
-    // Go straight from questions to sending
+    // Questions Lambda now sends to Slack internally
     tasks.generateFollowUpQuestions
-      .next(tasks.sendQuestionsToSlack);
-      
-    tasks.sendQuestionsToSlack
       .next(tasks.waitForUserResponse)
       .next(tasks.processUserResponse)
       .next(states.checkIfCancelled);
