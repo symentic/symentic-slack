@@ -125,6 +125,7 @@ export const handler: Handler<AnalyzeBugEvent, AnalysisResult> = async (event) =
     ...bugReportData,
     bugId,
     bugNumber, // Include bug number in the report
+    workspaceId, // Include workspace ID for profile engrams
     severity: finalSeverity,
     category
   };

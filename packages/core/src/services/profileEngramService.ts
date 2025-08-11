@@ -28,7 +28,11 @@ export class ProfileEngramService {
     const client = new DynamoDBClient({
       region: process.env.AWS_REGION || 'us-east-1'
     });
-    this.docClient = DynamoDBDocumentClient.from(client);
+    this.docClient = DynamoDBDocumentClient.from(client, {
+      marshallOptions: {
+        removeUndefinedValues: true
+      }
+    });
     this.tableName = process.env.PROFILE_ENGRAMS_TABLE || 'SymenticProfileEngrams';
   }
 
@@ -124,7 +128,14 @@ export class ProfileEngramService {
 
     try {
       const workspaceKey = await this.getWorkspaceKey(businessId);
-      const result = await this.docClient.send(new UpdateCommand({
+      console.log('[ProfileEngramService] Updating profile with enrichments:', {
+        workspaceKey,
+        userId,
+        tableName: this.tableName,
+        enrichmentCount: enrichments?.length || 0
+      });
+      
+      const updateCommand = new UpdateCommand({
         TableName: this.tableName,
         Key: {
           PK: workspaceKey,
@@ -134,11 +145,22 @@ export class ProfileEngramService {
         ExpressionAttributeNames: expressionAttributeNames,
         ExpressionAttributeValues: expressionAttributeValues,
         ReturnValues: 'ALL_NEW'
-      }));
+      });
+      
+      console.log('[ProfileEngramService] Update command:', JSON.stringify({
+        UpdateExpression: updateCommand.input.UpdateExpression,
+        ExpressionAttributeNames: updateCommand.input.ExpressionAttributeNames,
+        ExpressionAttributeValues: updateCommand.input.ExpressionAttributeValues
+      }, null, 2));
+      
+      const result = await this.docClient.send(updateCommand);
+      console.log('[ProfileEngramService] Update result - enrichments count:', 
+        result.Attributes?.enrichments?.length || 0);
 
       return result.Attributes ? this.mapDynamoItemToProfile(result.Attributes) : null;
     } catch (error) {
-      console.error('Error updating profile:', error);
+      console.error('[ProfileEngramService] Error updating profile:', error);
+      console.error('[ProfileEngramService] Error details:', JSON.stringify(error, null, 2));
       return null;
     }
   }
@@ -177,7 +199,8 @@ export class ProfileEngramService {
       }));
 
       // Store detailed interaction in separate record (for analytics)
-      await this.storeInteractionDetail(interaction);
+      // DISABLED: Not storing separate INTERACTION entries anymore
+      // await this.storeInteractionDetail(interaction);
     } catch (error) {
       console.error('Error recording interaction:', error);
     }
@@ -338,12 +361,11 @@ export class ProfileEngramService {
   async addEnrichment(
     businessId: string,
     userId: string,
-    enrichment: Omit<Enrichment, 'id' | 'timestamp'>
+    enrichment: Omit<Enrichment, 'id'>
   ): Promise<void> {
     const fullEnrichment: Enrichment = {
       ...enrichment,
-      id: `enr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      timestamp: new Date().toISOString()
+      id: `enr_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
 
     await this.updateProfile({

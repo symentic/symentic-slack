@@ -194,8 +194,9 @@ async function extractExternalUsers(text: string): Promise<Array<{ email?: strin
   return externalUsers;
 }
 
-// Capture interaction for profile engram
-async function captureInteractionForEngram(
+// DISABLED: Capture interaction for profile engram
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+async function _captureInteractionForEngram(
   message: SlackMessage,
   intent: { intent: string; confidence: number; entities?: Record<string, unknown> },
   businessId: string
@@ -967,13 +968,13 @@ app.message(async ({ message, say, client, body }) => {
     
     console.log(`Intent classified: ${intent.intent} (${intent.confidence})`);
     
-    // Capture interaction for profile engram (non-blocking)
-    const businessId = msg.team || '';
-    if (businessId) {
-      captureInteractionForEngram(msg, intent, businessId).catch(err => 
-        console.error('Profile engram capture error:', err)
-      );
-    }
+    // DISABLED: Not capturing interactions anymore
+    // const businessId = msg.team || '';
+    // if (businessId) {
+    //   captureInteractionForEngram(msg, intent, businessId).catch(err => 
+    //     console.error('Profile engram capture error:', err)
+    //   );
+    // }
     
     // Route based on intent
     console.log('Checking bug condition:', {

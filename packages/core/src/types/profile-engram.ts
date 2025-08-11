@@ -56,17 +56,13 @@ export interface EngramProfile {
 }
 
 export interface Enrichment {
-  id: string;                     // Unique enrichment ID
-  title: string;                  // Short descriptive title
-  timestamp: string;              // ISO timestamp
-  content: string;                // Main content (supports markdown)
+  // Simple format for dashboard display
+  agent: string;                  // e.g., "bug agent", "sourcing agent", "enrichment agent"
+  date: string;                   // YYYY-MM-DD format
+  detail: string;                 // Short, concise description of the activity
   
-  // Enrichment metadata
-  source?: 'bug_report' | 'meeting' | 'interaction' | 'manual' | 'ai_generated';
-  confidence?: number;            // 0-1 for AI-generated content
-  tags?: string[];                // Additional tags from this enrichment
-  
-  // Reference to source
+  // Optional extended fields (not displayed on dashboard)
+  id?: string;                    // Unique enrichment ID
   metadata?: {
     bugId?: string;
     meetingId?: string;

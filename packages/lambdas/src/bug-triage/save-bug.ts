@@ -1,7 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import { BugReport, openAIService } from '@symentic/core';
+import { BugReport, openAIService, profileEngramService } from '@symentic/core';
 import { ConversationPair, Engineer } from './types';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
@@ -45,7 +45,7 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   const bugId = bugReport.bugId || `bug-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
   
   // Extract workspace ID from the channel ID pattern
-  const workspaceId = bugReport.channelId?.substring(0, 11).match(/^[A-Z][0-9A-Z]+/)?.[0] || 'unknown';
+  const workspaceId = bugReport.channelId?.substring(0, 11).match(/^[CT][0-9A-Z]+/)?.[0] || bugReport.workspaceId || 'unknown';
   
   // Bug number should already be assigned in analyze step
   const bugNumber = bugReport.bugNumber;
@@ -94,6 +94,17 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   
   // Also create engrams for long-term memory
   await createBugEngram(bugReportData);
+  
+  // Create profile engrams for the bug reporter
+  let engineersList: Engineer[] | undefined;
+  if (engineers) {
+    if ('Payload' in engineers && engineers.Payload) {
+      engineersList = engineers.Payload;
+    } else if (Array.isArray(engineers)) {
+      engineersList = engineers;
+    }
+  }
+  await createProfileEngrams(bugReportData, engineersList);
   
   return bugReportData;
 };
@@ -175,5 +186,116 @@ async function createBugEngram(bugReport: BugReport) {
   } catch (error) {
     // Non-critical, don't throw
   }
+}
+
+async function createProfileEngrams(bugReport: BugReport, engineers?: Engineer[] | undefined) {
+  // Use the workspace ID from the bug report - should be set by analyze lambda
+  const workspaceId = bugReport.workspaceId;
+  
+  if (!workspaceId || workspaceId === 'unknown') {
+    console.error('[Profile Engram] Invalid workspace ID:', workspaceId);
+    return;
+  }
+  
+  console.log('[Profile Engram] Creating enrichments for bug report:', {
+    workspaceId,
+    reportedBy: bugReport.reportedBy,
+    bugId: bugReport.bugId,
+    severity: bugReport.severity
+  });
+  
+  try {
+    // First check if the reporter's profile exists
+    const reporterProfile = await profileEngramService.getProfile(workspaceId, bugReport.reportedBy);
+    console.log('[Profile Engram] Reporter profile exists?', !!reporterProfile);
+    
+    if (!reporterProfile) {
+      console.log('[Profile Engram] Reporter profile not found, skipping enrichment for:', bugReport.reportedBy);
+      // Note: Profile should be created by profile sync, not here
+      return;
+    }
+    
+    // Create enrichment for the bug reporter
+    const reporterSummary = createBugReportSummary(bugReport);
+    
+    console.log('[Profile Engram] Adding enrichment for reporter:', {
+      workspaceId,
+      userId: bugReport.reportedBy,
+      title: `Reported ${bugReport.severity} ${bugReport.category || 'bug'}`,
+      contentLength: reporterSummary.length
+    });
+    
+    // Create enrichment in simple format for dashboard
+    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+    
+    await profileEngramService.addEnrichment(
+      workspaceId,
+      bugReport.reportedBy,
+      {
+        agent: 'bug agent',
+        date: date,
+        detail: reporterSummary,
+        metadata: {
+          bugId: bugReport.bugId,
+          channelId: bugReport.channelId,
+          messageTs: bugReport.threadTs
+        }
+      }
+    );
+    
+    // Create enrichments for assigned engineers
+    if (engineers && engineers.length > 0) {
+      for (const engineer of engineers) {
+        const engineerDetail = `Assigned to fix ${bugReport.severity} ${bugReport.category || 'bug'} reported by user. Bug #${bugReport.bugNumber}.`;
+        
+        await profileEngramService.addEnrichment(
+          workspaceId,
+          engineer.userId,
+          {
+            agent: 'sourcing agent',
+            date: date,
+            detail: engineerDetail,
+            metadata: {
+              bugId: bugReport.bugId,
+              channelId: bugReport.channelId,
+              messageTs: bugReport.threadTs
+            }
+          }
+        );
+      }
+    }
+  } catch (error) {
+    console.error('[Profile Engram] Failed to create profile engrams:', error);
+    console.error('[Profile Engram] Error details:', JSON.stringify(error, null, 2));
+    // Non-critical, don't throw
+  }
+}
+
+function createBugReportSummary(bugReport: BugReport): string {
+  // Keep it short and simple, similar to Bobby's example
+  const parts = [];
+  
+  // Start with bug category
+  parts.push(`Reported a bug about ${bugReport.category || 'the system'}`);
+  
+  // Add a short excerpt of the description
+  if (bugReport.description) {
+    const shortDesc = bugReport.description.length > 80 
+      ? `with message "${bugReport.description.substring(0, 80)}..."`
+      : `with message "${bugReport.description}"`;
+    parts.push(shortDesc);
+  }
+  
+  // Add frequency if it's recurring
+  if (bugReport.frequency && bugReport.frequency !== 'once') {
+    parts.push(`This bug has been ${bugReport.frequency}.`);
+  }
+  
+  // Add environment in a concise way
+  if (bugReport.environment) {
+    parts.push(`Environment: ${bugReport.environment}`);
+  }
+  
+  return parts.join('. ');
 }
 
