@@ -1,29 +1,15 @@
 import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
+import { BugReportData, ConversationPair, SlackContext } from './types';
 
-interface BugReportData {
-  description: string;
-  reproductionSteps?: string;
-  environment?: string;
-  impact?: string;
-  errorMessages?: string;
-  frequency?: string;
-  severity?: string;
-  category?: string;
+interface BugReportDataWithHistory extends BugReportData {
   bugId: string;
-  bugNumber?: number;
-  reportedBy: string;
-  channel: string;
-  timestamp: string;
-  conversationHistory?: Array<{
-    question: string;
-    response: string;
-  }>;
+  conversationHistory?: ConversationPair[];
 }
 
 interface EnhanceBugEvent {
-  bugReport: BugReportData | {
-    Payload: BugReportData;
+  bugReport: BugReportDataWithHistory | {
+    Payload: BugReportDataWithHistory;
   };
   processedResponse?: {
     Payload?: {
@@ -36,17 +22,26 @@ interface EnhanceBugEvent {
       };
     };
   };
-  // Other fields that might be in the state
-  [key: string]: any;
+  context?: SlackContext;
+  threadTs?: string;
+  attemptCount?: number;
+  analysis?: {
+    category?: string;
+    severity?: string;
+    isEmergency?: boolean;
+  };
+  engineers?: unknown;
+  channel?: unknown;
+  meeting?: unknown;
 }
 
-export const handler: Handler<EnhanceBugEvent, BugReportData> = async (event) => {
+export const handler: Handler<EnhanceBugEvent, BugReportDataWithHistory> = async (event): Promise<BugReportDataWithHistory> => {
   
   try {
     // Handle nested payload structure
-    const bugReport: BugReportData = 'Payload' in event.bugReport && event.bugReport.Payload 
+    const bugReport: BugReportDataWithHistory = 'Payload' in event.bugReport && event.bugReport.Payload 
       ? event.bugReport.Payload 
-      : event.bugReport as BugReportData;
+      : event.bugReport as BugReportDataWithHistory;
     
     // Extract any additional info from processed responses (if they exist)
     const extractedInfo = event.processedResponse?.Payload?.extractedInfo || {};
@@ -90,7 +85,6 @@ export const handler: Handler<EnhanceBugEvent, BugReportData> = async (event) =>
       errorMessages: completeData.errorMessages,
       frequency: completeData.frequency,
       // Remove conversation history from the enhanced report since it's been incorporated
-      conversationHistory: undefined
     };
     
     return enhancedBugReport;
@@ -98,7 +92,7 @@ export const handler: Handler<EnhanceBugEvent, BugReportData> = async (event) =>
     // Return original data if enhancement fails
     const bugReport = 'Payload' in event.bugReport && event.bugReport.Payload 
       ? event.bugReport.Payload 
-      : event.bugReport as BugReportData;
+      : event.bugReport as BugReportDataWithHistory;
     return bugReport;
   }
 };

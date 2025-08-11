@@ -11,6 +11,7 @@ import { redisService } from '@symentic/core';
 import { profileEngramService } from '@symentic/core';
 import { ProfileInteraction, SlackUserData } from '@symentic/core';
 import { googleCalendarService } from '@symentic/core';
+import { CalendarToken, CalendarEvent, BusySlot, SlackBlock } from './types';
 
 // Initialize Step Functions client with explicit configuration
 const stepFunctions = new SFNClient({
@@ -495,7 +496,7 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
     
     // Check if user has calendar token
     const dynamoDBService = (await import('@symentic/core')).dynamoDBService;
-    let token: any = null;
+    let token: CalendarToken | null = null;
     let hasToken = false;
     let hasRefreshToken = false;
     
@@ -547,8 +548,8 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
     let expiryDate = token?.expiry_date ? new Date(token.expiry_date as number) : null;
     
     // Try to fetch calendar events
-    let events: any[] = [];
-    let busySlots: any[] = [];
+    let events: CalendarEvent[] = [];
+    let busySlots: BusySlot[] = [];
     let calendarError = null;
     let tokenRefreshed = false;
     
@@ -604,7 +605,7 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
     }
     
     // Build status message
-    const blocks: any[] = [
+    const blocks: SlackBlock[] = [
       {
         type: 'section',
         text: {
@@ -1318,7 +1319,7 @@ app.action('skip_meeting', async ({ body, ack, client }) => {
 export const handler = async (
   event: APIGatewayProxyEvent,
   context: { requestId: string },
-  callback: any
+  callback: (error?: Error | null, result?: APIGatewayProxyResult) => void
 ): Promise<APIGatewayProxyResult> => {
   console.log('Router Lambda invoked:', JSON.stringify({
     requestId: context.requestId,

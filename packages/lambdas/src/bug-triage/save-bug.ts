@@ -2,6 +2,7 @@ import { Handler } from 'aws-lambda';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { BugReport, openAIService } from '@symentic/core';
+import { ConversationPair, Engineer } from './types';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
@@ -9,14 +10,8 @@ const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
 interface SaveBugEvent {
   bugReport: BugReport | { Payload: BugReport };
   engineers?: {
-    Payload?: Array<{
-      userId: string;
-      name: string;
-    }>;
-  } | Array<{
-    userId: string;
-    name: string;
-  }>;
+    Payload?: Engineer[];
+  } | Engineer[];
   meeting?: {
     Payload?: {
       meetingId: string;
@@ -60,18 +55,19 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
   
   // Generate narrative description from conversation if available
   let enhancedDescription = bugReport.description;
-  if ((bugReport as any).conversationHistory?.length > 0) {
+  const bugReportWithHistory = bugReport as BugReport & { conversationHistory?: ConversationPair[] };
+  if (bugReportWithHistory.conversationHistory?.length && bugReportWithHistory.conversationHistory.length > 0) {
     enhancedDescription = await generateNarrativeFromConversation(
       bugReport.description,
-      (bugReport as any).conversationHistory
+      bugReportWithHistory.conversationHistory
     );
   }
   
   // Extract conversation Q&As if available
-  const conversationHistory = (bugReport as any).conversationHistory || [];
+  const conversationHistory = ((bugReport as BugReport & { conversationHistory?: ConversationPair[] }).conversationHistory || []);
   const conversations = {
-    questions: conversationHistory.map((c: any) => c.question),
-    responses: conversationHistory.map((c: any) => c.response)
+    questions: conversationHistory.map((c: ConversationPair) => c.question),
+    responses: conversationHistory.map((c: ConversationPair) => c.response)
   };
   
   const bugReportData: BugReport = {
@@ -80,7 +76,7 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
     bugNumber, // Use the bug number from analyze step
     workspaceId, // Add workspace ID for querying
     description: enhancedDescription,
-    assignedTo: Array.isArray(engineers) ? engineers.map((e: any) => e.userId) : [],
+    assignedTo: Array.isArray(engineers) ? engineers.map((e: Engineer) => e.userId) : [],
     triageChannel: channel && typeof channel === 'object' && 'channelId' in channel ? channel.channelId : undefined,
     channelName: channel && typeof channel === 'object' && 'channelName' in channel ? channel.channelName : undefined,
     meetingId: meeting && typeof meeting === 'object' && 'meetingId' in meeting ? meeting.meetingId : undefined,

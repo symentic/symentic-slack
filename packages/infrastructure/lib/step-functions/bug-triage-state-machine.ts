@@ -4,6 +4,7 @@ import * as stepfunctionsTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { LambdaFunctions } from '../types';
+import { BugTriageTasks, BugTriageStates } from './types';
 
 export interface BugTriageStateMachineProps {
   lambdaFunctions: LambdaFunctions;
@@ -45,7 +46,7 @@ export class BugTriageStateMachine extends Construct {
     });
   }
 
-  private createTasks(lambdaFunctions: LambdaFunctions, bugResponseQueue: sqs.Queue) {
+  private createTasks(lambdaFunctions: LambdaFunctions, bugResponseQueue: sqs.Queue): BugTriageTasks {
     return {
       analyzeBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'AnalyzeBugReport', {
         lambdaFunction: lambdaFunctions.bugAnalyze,
@@ -186,7 +187,7 @@ export class BugTriageStateMachine extends Construct {
     };
   }
 
-  private createStates() {
+  private createStates(): BugTriageStates {
     return {
       incrementAttempt: new stepfunctions.Pass(this, 'IncrementAttempt', {
         parameters: {
@@ -224,7 +225,7 @@ export class BugTriageStateMachine extends Construct {
     };
   }
 
-  private buildDefinition(tasks: any, states: any): stepfunctions.IChainable {
+  private buildDefinition(tasks: BugTriageTasks, states: BugTriageStates): stepfunctions.IChainable {
     // Define the flow
     
     // Quality check - ALWAYS ask 3 questions regardless of completeness

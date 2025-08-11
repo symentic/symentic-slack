@@ -1,6 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { extractPayload, extractArrayPayload } from '../utils/step-functions';
+import { BugReportData, Engineer, SlackBlock } from './types';
 
 interface CreateChannelEvent {
   bugReport: {
@@ -31,16 +32,12 @@ interface CreateChannelEvent {
     channelId?: string;
   };
   engineers?: {
-    Payload?: Array<{
-      userId: string;
-      name: string;
+    Payload?: Array<Engineer & {
       title?: string;
       bio?: string;
       assignmentReason?: string;
     }>;
-  } | Array<{
-    userId: string;
-    name: string;
+  } | Array<Engineer & {
     title?: string;
     bio?: string;
     assignmentReason?: string;
@@ -109,8 +106,9 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           channelId = result.channel.id;
           channelName = result.channel.name || channelName;
           created = true;
-        } catch (error: any) {
-          if (error?.data?.error === 'name_taken') {
+        } catch (error) {
+          const errorData = error as { data?: { error?: string } };
+          if (errorData?.data?.error === 'name_taken') {
             // Try to find and use existing channel
             const existingChannels = await slack.conversations.list({
               exclude_archived: true
@@ -143,7 +141,7 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
     // Invite relevant users
     const userIds = [
       bugReport.reportedBy,
-      ...engineers.map((e: any) => e.userId)
+      ...engineers.map((e) => e.userId)
     ].filter(Boolean);
     
     if (userIds.length > 0 && channelId) {
@@ -187,17 +185,26 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
 };
 
 function createBugOverviewBlocks(
-  bugReport: any,
-  engineers: Array<{
-    userId: string;
-    name: string;
+  bugReport: Partial<BugReportData> & { 
+    bugId?: string; 
+    bugNumber?: number; 
+    duplicateOf?: string;
+    description: string;
+    reportedBy: string;
+    severity?: string;
+    category?: string;
+    reproductionSteps?: string;
+    environment?: string;
+    impact?: string;
+  },
+  engineers: Array<Engineer & {
     title?: string;
     bio?: string;
     assignmentReason?: string;
   }> | undefined,
   bugNumber?: number,
   isUpdate = false
-): any[] {
+): SlackBlock[] {
   const severity = bugReport.severity || 'medium';
   const severityMap: { [key: string]: string } = {
     critical: '🔴',
@@ -207,7 +214,7 @@ function createBugOverviewBlocks(
   };
   const severityEmoji = severityMap[severity.toLowerCase()] || '🟡';
   
-  const blocks: any[] = [
+  const blocks: SlackBlock[] = [
     {
       type: 'header',
       text: {
@@ -297,8 +304,8 @@ function createBugOverviewBlocks(
     );
     
     // Add each engineer with their details
-    engineers.forEach((engineer: any) => {
-      const engineerBlocks: any[] = [
+    engineers.forEach((engineer) => {
+      const engineerBlocks: SlackBlock[] = [
         {
           type: 'section',
           text: {

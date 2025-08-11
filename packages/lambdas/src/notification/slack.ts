@@ -2,6 +2,7 @@ import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { BugReport } from '@symentic/core';
 import { extractPayload, extractArrayPayload } from '../utils/step-functions';
+import { SlackBlock, Engineer } from '../bug-triage/types';
 
 interface SlackNotificationEvent {
   action: string;
@@ -101,7 +102,7 @@ async function sendBugQuestions(slack: WebClient, event: SlackNotificationEvent)
     messageText = questions[0]; // Fallback if no acknowledgment
   }
   
-  const blocks: any[] = [
+  const blocks: SlackBlock[] = [
     {
       type: 'section',
       text: {
@@ -160,7 +161,7 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
   const isDuplicate = !!bugReport.duplicateOf;
   const bugNumber = bugReport.bugNumber ? `#${bugReport.bugNumber}` : '';
   
-  const blocks: any[] = [];
+  const blocks: SlackBlock[] = [];
   
   if (isDuplicate) {
     blocks.push({
@@ -224,7 +225,7 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
       'Leo Gao': 'Full-stack engineer with expertise in frontend payment flows and API integrations. Led the recent payment system refactor.'
     };
     
-    engineers.forEach((engineer: any) => {
+    engineers.forEach((engineer: Engineer & { assignmentReason?: string }) => {
       const profile = engineerProfiles[engineer.name] || 'Expert in this area based on past contributions.';
       blocks.push({
         type: 'section',

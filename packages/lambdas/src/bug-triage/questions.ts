@@ -1,24 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { openAIService } from '@symentic/core';
 import { WebClient } from '@slack/web-api';
-
-interface BugReportData {
-  description: string;
-  reproductionSteps?: string;
-  environment?: string;
-  impact?: string;
-  errorMessages?: string;
-  frequency?: string;
-  reportedBy?: string;
-  channel?: string;
-  timestamp?: string;
-  severity?: string;
-}
-
-interface ConversationPair {
-  question: string;
-  response: string;
-}
+import { BugReportData, ConversationPair, SlackBlock, SlackContext } from './types';
 
 interface GenerateQuestionsEvent {
   analysis?: {
@@ -37,12 +20,7 @@ interface GenerateQuestionsEvent {
   };
   attemptCount: number;
   conversationHistory?: ConversationPair[];
-  context?: {
-    userId: string;
-    channelId: string;
-    teamId: string;
-    slackClient?: string;
-  };
+  context?: SlackContext;
   threadTs?: string;
 }
 
@@ -127,7 +105,7 @@ export const handler: Handler<GenerateQuestionsEvent, QuestionsResult> = async (
         messageText = questions[0];
       }
       
-      const blocks: any[] = [
+      const blocks: SlackBlock[] = [
         {
           type: 'section',
           text: {

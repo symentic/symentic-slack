@@ -2,6 +2,8 @@ import { Handler } from 'aws-lambda';
 import { googleCalendarService } from '@symentic/core';
 import { WebClient } from '@slack/web-api';
 import { extractPayload, extractArrayPayload } from '../utils/step-functions';
+import { Engineer, BugReportData } from '../bug-triage/types';
+import { SlackBlock } from '../types/slack';
 
 interface ScheduleMeetingEvent {
   bugReport: {
@@ -89,7 +91,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       availableEngineers: string[];
     }> = availability.slots?.map(slot => ({
       ...slot,
-      availableEngineers: engineers.map((e: any) => e.userId)
+      availableEngineers: engineers.map((e) => e.userId)
     })) || [];
     
     if (availableSlots.length === 0) {
@@ -98,7 +100,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       availableSlots.push({
         start: defaultTime,
         end: new Date(new Date(defaultTime).getTime() + 30 * 60000).toISOString(),
-        availableEngineers: engineers.map((e: any) => e.userId)
+        availableEngineers: engineers.map((e) => e.userId)
       });
     }
     
@@ -116,7 +118,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       meetingId: `pending-${Date.now()}`,
       startTime: availableSlots[0].start,
       endTime: availableSlots[0].end,
-      attendees: engineers.map((e: any) => e.userId),
+      attendees: engineers.map((e) => e.userId),
       confirmationRequested: true,
       proposedSlots: availableSlots
     };
@@ -129,7 +131,7 @@ export const handler: Handler<ScheduleMeetingEvent, MeetingResult> = async (even
       meetingId: `meeting-${Date.now()}`,
       startTime: fallbackTime,
       endTime: new Date(new Date(fallbackTime).getTime() + 30 * 60000).toISOString(),
-      attendees: engineers.map((e: any) => e.userId),
+      attendees: engineers.map((e) => e.userId),
       confirmationRequested: false
     };
   }
@@ -151,10 +153,16 @@ async function postMeetingConfirmationRequest(
     end: string;
     availableEngineers: string[];
   }>,
-  engineers: any[],
-  bugReport: any
+  engineers: Engineer[],
+  bugReport: Partial<BugReportData> & { 
+    bugId?: string; 
+    bugNumber?: number;
+    description: string;
+    severity?: string;
+    reportedBy?: string;
+  }
 ) {
-  const blocks: any[] = [
+  const blocks: SlackBlock[] = [
     {
       type: 'header',
       text: {
@@ -258,7 +266,7 @@ async function postMeetingConfirmationRequest(
     elements: [
       {
         type: 'mrkdwn',
-        text: `*Attendees:* ${engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
+        text: `*Attendees:* ${engineers.map((e) => `<@${e.userId}>`).join(', ')}`
       }
     ]
   });

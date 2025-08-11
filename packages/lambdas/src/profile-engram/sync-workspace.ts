@@ -1,6 +1,7 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { profileEngramService, CreateProfileRequest, SlackUserData } from '@symentic/core';
+import { UserProfile, ProfileUpdate } from './types';
 
 interface SyncWorkspaceEvent {
   businessId: string;  // Slack workspace ID
@@ -132,7 +133,7 @@ export const handler: Handler<SyncWorkspaceEvent, SyncResult> = async (event) =>
 };
 
 function shouldUpdateProfile(
-  existingProfile: any,
+  existingProfile: UserProfile,
   slackUser: SlackUserData,
   lastSyncTime?: string
 ): boolean {
@@ -155,12 +156,12 @@ function shouldUpdateProfile(
 async function updateExistingProfile(
   businessId: string,
   slackUser: SlackUserData,
-  existingProfile: any
+  existingProfile: UserProfile
 ): Promise<void> {
   const email = slackUser.profile?.email?.toLowerCase();
   const isFounder = email === 'richxhuang@gmail.com' || email === 'leogao@umich.edu';
   
-  const updates: any = {
+  const updates: ProfileUpdate = {
     name: slackUser.real_name || slackUser.name || existingProfile.name,
     email: slackUser.profile?.email || existingProfile.email,
     role: isFounder ? 'Co-Founder' : (slackUser.profile?.title || existingProfile.role),

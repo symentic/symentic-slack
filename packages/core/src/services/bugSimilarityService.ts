@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, QueryCommand, ScanCommand, ScanCommandInput, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { BugReport } from '../types/domain';
 import { openAIService } from './openai';
 import crypto from 'crypto';
@@ -128,7 +128,7 @@ export class BugSimilarityService {
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
-      const params: any = {
+      const params: ScanCommandInput = {
         TableName: this.tableName,
         FilterExpression: 'workspaceId = :workspaceId AND createdAt > :date AND #status <> :resolved',
         ExpressionAttributeValues: {
@@ -143,7 +143,7 @@ export class BugSimilarityService {
       };
 
       // Add category filter if provided
-      if (category) {
+      if (category && params.ExpressionAttributeValues) {
         params.FilterExpression += ' AND category = :category';
         params.ExpressionAttributeValues[':category'] = category;
       }
@@ -202,7 +202,7 @@ Return JSON format:
 
       const similarities = JSON.parse(response);
       
-      return similarities.map((sim: any) => {
+      return similarities.map((sim: { index: number; similarity: number }) => {
         const bug = existingBugs[sim.index - 1];
         return {
           bugId: bug.bugId,

@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } from '@aws-sdk/client-sfn';
 import { v4 as uuidv4 } from 'uuid';
+import { BugReport } from '../types/domain';
 
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
 const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
@@ -22,10 +23,14 @@ export interface ExecutionData {
   metadata: {
     attemptCount: number;
     completenessScore?: number;
-    bugReport?: any;
+    bugReport?: BugReport;
     engineersFound?: string[];
     channelCreated?: string;
-    meetingScheduled?: any;
+    meetingScheduled?: {
+      meetingId?: string;
+      startTime?: string;
+      meetingLink?: string;
+    };
     bugId?: string;
   };
   createdAt: string;
@@ -198,7 +203,7 @@ export class ExecutionTracker {
     return result.Item as ExecutionData | null;
   }
 
-  async sendTaskSuccess(executionId: string, output: any): Promise<void> {
+  async sendTaskSuccess(executionId: string, output: unknown): Promise<void> {
     const execution = await this.getExecution(executionId);
     if (!execution || !execution.taskToken) {
       throw new Error(`No task token found for execution ${executionId}`);
