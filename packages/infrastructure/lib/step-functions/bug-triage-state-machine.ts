@@ -4,6 +4,7 @@ import * as stepfunctionsTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 import { LambdaFunctions } from '../types';
+import { BugTriageTasks, BugTriageStates } from './types';
 
 export interface BugTriageStateMachineProps {
   lambdaFunctions: LambdaFunctions;
@@ -45,20 +46,27 @@ export class BugTriageStateMachine extends Construct {
     });
   }
 
-  private createTasks(lambdaFunctions: LambdaFunctions, bugResponseQueue: sqs.Queue) {
+  private createTasks(lambdaFunctions: LambdaFunctions, bugResponseQueue: sqs.Queue): BugTriageTasks {
     return {
       analyzeBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'AnalyzeBugReport', {
         lambdaFunction: lambdaFunctions.bugAnalyze,
+        resultPath: '$',
         outputPath: '$.Payload',
-        resultPath: '$.analysis',
       }),
 
       generateFollowUpQuestions: new stepfunctionsTasks.LambdaInvoke(this, 'GenerateFollowUpQuestions', {
         lambdaFunction: lambdaFunctions.bugQuestions,
-        outputPath: '$.Payload',
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          analysis: stepfunctions.JsonPath.objectAt('$.analysis'),
+          attemptCount: stepfunctions.JsonPath.objectAt('$.attemptCount'),
+          conversationHistory: stepfunctions.JsonPath.objectAt('$.conversationHistory'),
+          context: stepfunctions.JsonPath.objectAt('$.context'),
+          threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
+        }),
         resultPath: '$.questions',
       }),
-
+      
       sendQuestionsToSlack: new stepfunctionsTasks.LambdaInvoke(this, 'SendQuestionsToSlack', {
         lambdaFunction: lambdaFunctions.slackNotify,
         payload: stepfunctions.TaskInput.fromObject({
@@ -67,7 +75,7 @@ export class BugTriageStateMachine extends Construct {
           context: stepfunctions.JsonPath.objectAt('$.context'),
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
         }),
-        outputPath: '$.Payload',
+        resultPath: '$.slackNotifyResult',
       }),
 
       waitForUserResponse: new stepfunctionsTasks.SqsSendMessage(this, 'WaitForUserResponse', {
@@ -80,50 +88,58 @@ export class BugTriageStateMachine extends Construct {
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
           channelId: stepfunctions.JsonPath.objectAt('$.context.channelId'),
           attemptCount: stepfunctions.JsonPath.objectAt('$.attemptCount'),
+          isTaskTokenMessage: true, // Flag to indicate this is a task token message
         }),
         integrationPattern: stepfunctions.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
-        timeout: cdk.Duration.hours(48),
+        taskTimeout: stepfunctions.Timeout.duration(cdk.Duration.hours(48)),
+        resultPath: '$.userResponse',
       }),
 
       processUserResponse: new stepfunctionsTasks.LambdaInvoke(this, 'ProcessUserResponse', {
         lambdaFunction: lambdaFunctions.bugProcessResponse,
-        outputPath: '$.Payload',
         resultPath: '$.processedResponse',
       }),
 
       updateBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'UpdateBugReport', {
         lambdaFunction: lambdaFunctions.bugUpdate,
-        outputPath: '$.Payload',
+        payload: stepfunctions.TaskInput.fromJsonPathAt('$'),
         resultPath: '$.bugReport',
       }),
 
+      // Removed - now handled in analyze Lambda
+
       findRelevantEngineers: new stepfunctionsTasks.LambdaInvoke(this, 'FindRelevantEngineers', {
         lambdaFunction: lambdaFunctions.bugFindEngineers,
-        outputPath: '$.Payload',
         resultPath: '$.engineers',
+      }),
+
+      enhanceBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'EnhanceBugReport', {
+        lambdaFunction: lambdaFunctions.bugEnhance,
+        resultPath: '$.bugReport',
       }),
 
       createTriageChannel: new stepfunctionsTasks.LambdaInvoke(this, 'CreateTriageChannel', {
         lambdaFunction: lambdaFunctions.bugCreateChannel,
-        outputPath: '$.Payload',
+        payload: stepfunctions.TaskInput.fromObject({
+          bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
+          engineers: stepfunctions.JsonPath.objectAt('$.engineers'),
+          workspaceId: stepfunctions.JsonPath.stringAt('$.context.teamId')
+        }),
         resultPath: '$.channel',
       }),
 
       checkCalendarAvailability: new stepfunctionsTasks.LambdaInvoke(this, 'CheckCalendarAvailability', {
-        lambdaFunction: lambdaFunctions.calendarCheckAvailability,
-        outputPath: '$.Payload',
+        lambdaFunction: lambdaFunctions.bugTriageCheckAvailability,
         resultPath: '$.availability',
       }),
 
       scheduleMeeting: new stepfunctionsTasks.LambdaInvoke(this, 'ScheduleMeeting', {
-        lambdaFunction: lambdaFunctions.calendarScheduleMeeting,
-        outputPath: '$.Payload',
+        lambdaFunction: lambdaFunctions.bugTriageScheduleMeeting,
         resultPath: '$.meeting',
       }),
 
       saveBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'SaveBugReport', {
         lambdaFunction: lambdaFunctions.bugSave,
-        outputPath: '$.Payload',
         resultPath: '$.savedBug',
       }),
 
@@ -135,17 +151,17 @@ export class BugTriageStateMachine extends Construct {
           context: stepfunctions.JsonPath.objectAt('$.context'),
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
         }),
-        outputPath: '$.Payload',
+        resultPath: '$.finalNotificationResult',
       }),
 
       handleTimeout: new stepfunctionsTasks.LambdaInvoke(this, 'HandleTimeout', {
         lambdaFunction: lambdaFunctions.slackNotify,
         payload: stepfunctions.TaskInput.fromObject({
           action: 'timeoutNotification',
-          context: stepfunctions.JsonPath.objectAt('$.context'),
-          threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
+          context: stepfunctions.JsonPath.objectAt('$$.Execution.Input.context'),
+          threadTs: stepfunctions.JsonPath.objectAt('$$.Execution.Input.threadTs'),
         }),
-        outputPath: '$.Payload',
+        resultPath: '$.timeoutNotificationResult',
       }),
 
       maxAttemptsReached: new stepfunctionsTasks.LambdaInvoke(this, 'MaxAttemptsReached', {
@@ -156,7 +172,7 @@ export class BugTriageStateMachine extends Construct {
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
           bugReport: stepfunctions.JsonPath.objectAt('$.bugReport'),
         }),
-        outputPath: '$.Payload',
+        resultPath: '$.maxAttemptsNotificationResult',
       }),
 
       cancelBugReport: new stepfunctionsTasks.LambdaInvoke(this, 'CancelBugReport', {
@@ -166,23 +182,26 @@ export class BugTriageStateMachine extends Construct {
           context: stepfunctions.JsonPath.objectAt('$.context'),
           threadTs: stepfunctions.JsonPath.objectAt('$.threadTs'),
         }),
-        outputPath: '$.Payload',
+        resultPath: '$.cancelNotificationResult',
       }),
     };
   }
 
-  private createStates() {
+  private createStates(): BugTriageStates {
     return {
       incrementAttempt: new stepfunctions.Pass(this, 'IncrementAttempt', {
         parameters: {
           'attemptCount.$': 'States.MathAdd($.attemptCount, 1)',
-          'bugReport.$': '$.bugReport',
+          'bugReport.$': '$.bugReport.Payload',
           'context.$': '$.context',
           'threadTs.$': '$.threadTs',
           'bugId.$': '$.bugId',
           'analysis.$': '$.analysis',
+          'conversationHistory.$': '$.conversationHistory',
         },
       }),
+
+      // Removed - now handled in analyze Lambda
 
       bugTriageComplete: new stepfunctions.Succeed(this, 'BugTriageComplete'),
       bugReportCancelled: new stepfunctions.Succeed(this, 'BugReportCancelled'),
@@ -201,16 +220,18 @@ export class BugTriageStateMachine extends Construct {
       checkIfCancelled: new stepfunctions.Choice(this, 'CheckIfCancelled'),
       checkMaxAttempts: new stepfunctions.Choice(this, 'CheckMaxAttempts'),
       checkIfHighSeverity: new stepfunctions.Choice(this, 'CheckIfHighSeverity'),
+      checkUpdatedCompleteness: new stepfunctions.Choice(this, 'CheckUpdatedCompleteness'),
+      // Removed - always send questions
     };
   }
 
-  private buildDefinition(tasks: any, states: any): stepfunctions.IChainable {
+  private buildDefinition(tasks: BugTriageTasks, states: BugTriageStates): stepfunctions.IChainable {
     // Define the flow
     
-    // Quality check
+    // Quality check - ALWAYS ask 3 questions regardless of completeness
     states.checkReportQuality
       .when(
-        stepfunctions.Condition.numberGreaterThanEquals('$.analysis.completenessScore', 80),
+        stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
         tasks.findRelevantEngineers
       )
       .otherwise(tasks.generateFollowUpQuestions);
@@ -218,32 +239,50 @@ export class BugTriageStateMachine extends Construct {
     // Cancel check
     states.checkIfCancelled
       .when(
-        stepfunctions.Condition.stringEquals('$.processedResponse.action', 'cancel'),
+        stepfunctions.Condition.stringEquals('$.processedResponse.Payload.action', 'cancel'),
         tasks.cancelBugReport
       )
       .otherwise(tasks.updateBugReport);
 
-    // Max attempts check
+    // Max attempts check - after 3 questions, still go through analyze to prepare data
     states.checkMaxAttempts
       .when(
         stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
-        tasks.maxAttemptsReached
+        tasks.analyzeBugReport
       )
       .otherwise(tasks.analyzeBugReport);
 
-    // High severity check
+    // High severity check - handle both direct and Payload wrapped paths with existence checks
     states.checkIfHighSeverity
       .when(
-        stepfunctions.Condition.stringEquals('$.bugReport.severity', 'high'),
+        stepfunctions.Condition.or(
+          // Check direct path
+          stepfunctions.Condition.and(
+            stepfunctions.Condition.isPresent('$.bugReport.severity'),
+            stepfunctions.Condition.or(
+              stepfunctions.Condition.stringEquals('$.bugReport.severity', 'high'),
+              stepfunctions.Condition.stringEquals('$.bugReport.severity', 'critical')
+            )
+          ),
+          // Check Payload wrapped path
+          stepfunctions.Condition.and(
+            stepfunctions.Condition.isPresent('$.bugReport.Payload.severity'),
+            stepfunctions.Condition.or(
+              stepfunctions.Condition.stringEquals('$.bugReport.Payload.severity', 'high'),
+              stepfunctions.Condition.stringEquals('$.bugReport.Payload.severity', 'critical')
+            )
+          )
+        ),
         tasks.createTriageChannel
       )
       .otherwise(tasks.saveBugReport);
 
-    // Chain the tasks
-    tasks.analyzeBugReport.next(states.checkReportQuality);
+    // Simplified chain - analyze does everything
+    tasks.analyzeBugReport
+      .next(states.checkReportQuality);
     
+    // Questions Lambda now sends to Slack internally
     tasks.generateFollowUpQuestions
-      .next(tasks.sendQuestionsToSlack)
       .next(tasks.waitForUserResponse)
       .next(tasks.processUserResponse)
       .next(states.checkIfCancelled);
@@ -251,12 +290,23 @@ export class BugTriageStateMachine extends Construct {
     tasks.cancelBugReport.next(states.bugReportCancelled);
 
     tasks.updateBugReport
-      .next(states.incrementAttempt)
-      .next(states.checkMaxAttempts);
+      .next(states.checkUpdatedCompleteness);
+    
+    // Check if we've reached 3 questions
+    states.checkUpdatedCompleteness
+      .when(
+        stepfunctions.Condition.numberGreaterThanEquals('$.attemptCount', 3),
+        tasks.findRelevantEngineers
+      )
+      .otherwise(states.incrementAttempt);
+    
+    states.incrementAttempt.next(states.checkMaxAttempts);
 
     tasks.maxAttemptsReached.next(states.bugReportFailed);
 
-    tasks.findRelevantEngineers.next(states.checkIfHighSeverity);
+    tasks.findRelevantEngineers
+      .next(tasks.enhanceBugReport)
+      .next(states.checkIfHighSeverity);
 
     tasks.createTriageChannel
       .next(tasks.checkCalendarAvailability)

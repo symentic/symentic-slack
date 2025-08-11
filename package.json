@@ -19,7 +19,8 @@
     "cdk:deploy": "npm run deploy -w @symentic/infrastructure",
     "cdk:deploy:prod": "npm run deploy:prod -w @symentic/infrastructure",
     "cdk:destroy": "npm run destroy -w @symentic/infrastructure",
-    "cdk:diff": "npm run diff -w @symentic/infrastructure"
+    "cdk:diff": "npm run diff -w @symentic/infrastructure",
+    "update-slack-manifest": "ts-node scripts/update-slack-manifest.ts"
   },
   "keywords": [
     "slack",
@@ -32,42 +33,42 @@
   "author": "Symentic",
   "license": "MIT",
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.515.0",
-    "@aws-sdk/lib-dynamodb": "^3.515.0",
+    "@aws-sdk/client-dynamodb": "^3.848.0",
+    "@aws-sdk/lib-dynamodb": "^3.848.0",
     "@codegenie/serverless-express": "^4.17.0",
-    "@slack/bolt": "^3.17.1",
-    "@slack/web-api": "^7.0.2",
+    "@slack/bolt": "^4.4.0",
+    "@slack/web-api": "^7.9.3",
     "aws-sdk": "^2.1547.0",
-    "axios": "^1.6.7",
-    "dotenv": "^16.4.5",
-    "express": "^4.18.3",
-    "googleapis": "^134.0.0",
-    "openai": "^4.47.1",
-    "redis": "^4.6.13",
-    "uuid": "^9.0.1"
+    "axios": "^1.11.0",
+    "dotenv": "^17.2.0",
+    "express": "^5.1.0",
+    "googleapis": "^153.0.0",
+    "openai": "^5.10.1",
+    "redis": "^5.6.0",
+    "uuid": "^11.1.0"
   },
   "engines": {
     "node": ">=20.0.0"
   },
   "devDependencies": {
     "@aws-cdk/assert": "^2.68.0",
-    "@types/aws-lambda": "^8.10.134",
-    "@types/express": "^4.17.21",
-    "@types/jest": "^29.5.12",
-    "@types/node": "^20.11.24",
-    "@types/uuid": "^9.0.8",
-    "@typescript-eslint/eslint-plugin": "^7.1.0",
-    "@typescript-eslint/parser": "^7.1.0",
+    "@types/aws-lambda": "^8.10.150",
+    "@types/express": "^5.0.3",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.0.13",
+    "@types/uuid": "^10.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.37.0",
+    "@typescript-eslint/parser": "^8.37.0",
     "aws-cdk-lib": "^2.206.0",
     "constructs": "^10.4.2",
-    "eslint": "^8.57.0",
-    "jest": "^29.7.0",
-    "serverless": "^3.38.0",
+    "eslint": "^9.31.0",
+    "jest": "^30.0.5",
+    "serverless": "^4.17.1",
     "serverless-dotenv-plugin": "^6.0.0",
     "serverless-plugin-typescript": "^2.1.5",
     "serverless-step-functions": "^3.23.2",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.8.0"
   }
 }

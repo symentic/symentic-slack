@@ -19,7 +19,7 @@ const CALENDAR_AGENT_CONFIG: AgentConfig = {
   ],
   priority: 1,
   requiredServices: ['googleCalendar', 'dynamodb'],
-  modelPreference: 'gpt-3.5-turbo' // Simple scheduling usually doesn't need GPT-4
+  modelPreference: 'gpt-4o-mini' // Use GPT-4o-mini for better accuracy with 10M free tokens daily
 };
 
 export class CalendarAgent extends BaseAgent {

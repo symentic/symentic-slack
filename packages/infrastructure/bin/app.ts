@@ -16,7 +16,7 @@ const region = app.node.tryGetContext('region') || 'us-east-1';
 
 // Main stack with Lambda functions, DynamoDB tables, and SQS
 const mainStack = new MainStack(app, `SymenticSlackBotStack-${stage}`, {
-  stackName: `semantic-slack-bot-v2-${stage}`,
+      stackName: `symentic-slack-bot-${stage}`,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: region,
@@ -27,7 +27,7 @@ const mainStack = new MainStack(app, `SymenticSlackBotStack-${stage}`, {
 
 // Step Functions stack (depends on main stack for Lambda ARNs)
 const stepFunctionsStack = new StepFunctionsStack(app, `SymenticSlackBotStepFunctionsStack-${stage}`, {
-  stackName: `semantic-slack-bot-v2-step-functions-${stage}`,
+      stackName: `symentic-slack-bot-step-functions-${stage}`,
   env: {
     account: process.env.CDK_DEFAULT_ACCOUNT,
     region: region,

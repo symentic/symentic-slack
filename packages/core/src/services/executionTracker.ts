@@ -1,8 +1,12 @@
-import { DynamoDB, StepFunctions } from 'aws-sdk';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { SFNClient, SendTaskSuccessCommand, SendTaskFailureCommand } from '@aws-sdk/client-sfn';
 import { v4 as uuidv4 } from 'uuid';
+import { BugReport } from '../types/domain';
 
-const dynamodb = new DynamoDB.DocumentClient();
-const stepFunctions = new StepFunctions();
+const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION || 'us-east-1' });
+const dynamodb = DynamoDBDocumentClient.from(dynamoClient);
+const stepFunctions = new SFNClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 export interface ExecutionData {
   executionId: string;
@@ -19,10 +23,14 @@ export interface ExecutionData {
   metadata: {
     attemptCount: number;
     completenessScore?: number;
-    bugReport?: any;
+    bugReport?: BugReport;
     engineersFound?: string[];
     channelCreated?: string;
-    meetingScheduled?: any;
+    meetingScheduled?: {
+      meetingId?: string;
+      startTime?: string;
+      meetingLink?: string;
+    };
     bugId?: string;
   };
   createdAt: string;
@@ -41,7 +49,7 @@ export class ExecutionTracker {
   private tableName: string;
 
   constructor() {
-    this.tableName = process.env.EXECUTIONS_TABLE || 'SemanticExecutions';
+    this.tableName = process.env.EXECUTIONS_TABLE || 'SymenticExecutions';
   }
 
   async createExecution(params: {
@@ -80,10 +88,11 @@ export class ExecutionTracker {
       ttl: Math.floor(Date.now() / 1000) + 172800 // 48 hours
     };
 
-    await dynamodb.put({
+    const command = new PutCommand({
       TableName: this.tableName,
       Item: execution
-    }).promise();
+    });
+    await dynamodb.send(command);
 
     return execution;
   }
@@ -108,13 +117,14 @@ export class ExecutionTracker {
     expressionAttributeNames['#updatedAt'] = 'updatedAt';
     expressionAttributeValues[':updatedAt'] = new Date().toISOString();
 
-    await dynamodb.update({
+    const command = new UpdateCommand({
       TableName: this.tableName,
       Key: { executionId },
       UpdateExpression: `SET ${updateExpression.join(', ')}`,
       ExpressionAttributeNames: expressionAttributeNames,
       ExpressionAttributeValues: expressionAttributeValues
-    }).promise();
+    });
+    await dynamodb.send(command);
   }
 
   async getExecutionByThread(threadId: string): Promise<ExecutionData | null> {
@@ -129,7 +139,8 @@ export class ExecutionTracker {
       Limit: 1
     };
 
-    const result = await dynamodb.query(params).promise();
+    const command = new QueryCommand(params);
+    const result = await dynamodb.send(command);
     return result.Items && result.Items.length > 0 ? result.Items[0] as ExecutionData : null;
   }
 
@@ -147,7 +158,8 @@ export class ExecutionTracker {
       }
     };
 
-    const result = await dynamodb.query(params).promise();
+    const command = new QueryCommand(params);
+    const result = await dynamodb.send(command);
     return (result.Items || []) as ExecutionData[];
   }
 
@@ -182,24 +194,26 @@ export class ExecutionTracker {
   }
 
   async getExecution(executionId: string): Promise<ExecutionData | null> {
-    const result = await dynamodb.get({
+    const command = new GetCommand({
       TableName: this.tableName,
       Key: { executionId }
-    }).promise();
+    });
+    const result = await dynamodb.send(command);
 
     return result.Item as ExecutionData | null;
   }
 
-  async sendTaskSuccess(executionId: string, output: any): Promise<void> {
+  async sendTaskSuccess(executionId: string, output: unknown): Promise<void> {
     const execution = await this.getExecution(executionId);
     if (!execution || !execution.taskToken) {
       throw new Error(`No task token found for execution ${executionId}`);
     }
 
-    await stepFunctions.sendTaskSuccess({
+    const command = new SendTaskSuccessCommand({
       taskToken: execution.taskToken,
       output: JSON.stringify(output)
-    }).promise();
+    });
+    await stepFunctions.send(command);
 
     await this.updateExecution(executionId, {
       status: 'active',
@@ -213,11 +227,12 @@ export class ExecutionTracker {
       throw new Error(`No task token found for execution ${executionId}`);
     }
 
-    await stepFunctions.sendTaskFailure({
+    const command = new SendTaskFailureCommand({
       taskToken: execution.taskToken,
       error,
       cause
-    }).promise();
+    });
+    await stepFunctions.send(command);
 
     await this.updateExecution(executionId, {
       status: 'failed',

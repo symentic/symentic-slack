@@ -1,13 +1,23 @@
 import { Handler } from 'aws-lambda';
-// TODO: Re-enable when implementing actual calendar integration
-// import { googleCalendarService } from '../../services/googleCalendar';
+import { googleCalendarService, dynamoDBService } from '@symentic/core';
 
 interface CheckAvailabilityEvent {
-  engineers: Array<{
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
     userId: string;
     name: string;
   }>;
-  urgency: string;
+  urgency?: string;
+  bugReport?: {
+    Payload?: {
+      severity?: string;
+    };
+    severity?: string;
+  };
 }
 
 interface AvailabilityResult {
@@ -22,98 +32,163 @@ interface AvailabilityResult {
 export const handler: Handler<CheckAvailabilityEvent, AvailabilityResult> = async (event) => {
   console.log('Checking calendar availability:', JSON.stringify(event, null, 2));
   
+  // Handle Step Functions nested payload structure
+  const engineersPayload = event.engineers as { Payload?: Array<{ userId: string; name: string }> } | undefined;
+  const engineers = engineersPayload?.Payload || event.engineers || [];
+  
+  // Extract severity from bug report
+  const bugReportPayload = event.bugReport as { Payload?: { severity?: string }; severity?: string } | undefined;
+  const severity = bugReportPayload?.Payload?.severity || bugReportPayload?.severity || 'medium';
+  
   try {
-    // Determine time window based on urgency
-    // TODO: Use time window for actual availability checking
-    // const timeWindow = getTimeWindow(event.urgency);
+    // Determine urgency based on severity
+    const urgency = severity === 'critical' || severity === 'high' ? 'high' : 'medium';
+    const daysAhead = urgency === 'high' ? 1 : 3; // Critical/high = next 24h, others = next 3 days
     
-    // For now, we'll use simplified availability checking
-    // In production, you'd need to map Slack user IDs to email addresses
-    // const engineerEmails = event.engineers.map(e => `${e.userId}@company.com`);
+    // Get engineer user IDs
+    const engineerUserIds = (engineers as Array<{ userId: string; name: string }>).map(e => e.userId);
     
-    // Check free/busy time for all engineers
-    // TODO: Implement actual free/busy checking
-    // const freeBusyData = await googleCalendarService.findFreeBusyTime(
-    //   engineerEmails,
-    //   3 // Check next 3 days
-    // );
+    // For each engineer, check if they have calendar tokens
+    const engineersWithCalendar: string[] = [];
+    const engineersWithoutCalendar: string[] = [];
     
-    // Convert to our format
-    const engineerAvailability: EngineerAvailability[] = event.engineers.map((engineer) => {
-      // TODO: Use busy slots from freeBusyData to calculate free slots
-      // const emailKey = engineerEmails[index];
-      // const busySlots = freeBusyData[emailKey as keyof typeof freeBusyData] || [];
-      // TODO: Calculate free slots from busy slots
-      return {
-        userId: engineer.userId,
-        freeSlots: [] as TimeSlot[] // Simplified for now
-      };
-    });
-    
-    // Find common slots
-    const commonSlots = findCommonSlots(engineerAvailability);
-    
-    // Format result
-    const result: AvailabilityResult = {
-      slots: commonSlots.slice(0, 5), // Top 5 slots
-      suggestedTime: commonSlots[0]?.start
-    };
-    
-    // If no common slots, just return individual availability
-    if (commonSlots.length === 0 && engineerAvailability.length > 0) {
-      result.slots = engineerAvailability
-        .flatMap(e => e.freeSlots.map((slot: TimeSlot) => ({
-          start: slot.start,
-          end: slot.end,
-          availableEngineers: [e.userId]
-        })))
-        .slice(0, 5);
+    for (const userId of engineerUserIds) {
+      try {
+        const hasToken = await dynamoDBService.getCalendarToken(userId);
+        if (hasToken) {
+          engineersWithCalendar.push(userId);
+        } else {
+          engineersWithoutCalendar.push(userId);
+        }
+      } catch (error) {
+        console.log(`No calendar token for user ${userId}`);
+        engineersWithoutCalendar.push(userId);
+      }
     }
     
-    return result;
-  } catch (error) {
-    console.error('Error checking availability:', error);
+    console.log('Engineers with calendar:', engineersWithCalendar);
+    console.log('Engineers without calendar:', engineersWithoutCalendar);
     
-    // Return default slots as fallback
-    const now = new Date();
-    const tomorrow = new Date(now);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(10, 0, 0, 0);
+    // If no engineers have calendar connected, return default slots
+    if (engineersWithCalendar.length === 0) {
+      return getDefaultSlots(engineerUserIds, urgency);
+    }
+    
+    // Get free/busy time for engineers with calendar
+    const freeSlots = await googleCalendarService.findFreeBusyTime(
+      engineersWithCalendar,
+      daysAhead
+    );
+    
+    console.log(`Found ${freeSlots.length} potential free slots`);
+    
+    // Convert to our format and find best slots
+    const availableSlots: SlotWithEngineers[] = freeSlots.map(slot => ({
+      start: slot.start.toISOString(),
+      end: slot.end.toISOString(),
+      availableEngineers: engineersWithCalendar // All calendar-connected engineers are available
+    }));
+    
+    // For engineers without calendar, assume they're available for all slots
+    if (engineersWithoutCalendar.length > 0) {
+      availableSlots.forEach(slot => {
+        slot.availableEngineers.push(...engineersWithoutCalendar);
+      });
+    }
+    
+    // Sort slots by completeness (slots where all engineers are available first)
+    availableSlots.sort((a, b) => {
+      const aComplete = a.availableEngineers.length === engineerUserIds.length;
+      const bComplete = b.availableEngineers.length === engineerUserIds.length;
+      if (aComplete && !bComplete) return -1;
+      if (!aComplete && bComplete) return 1;
+      // Then sort by time (earliest first)
+      return new Date(a.start).getTime() - new Date(b.start).getTime();
+    });
+    
+    // Take top 5 slots
+    const topSlots = availableSlots.slice(0, 5);
     
     return {
-      slots: [{
-        start: tomorrow.toISOString(),
-        end: new Date(tomorrow.getTime() + 30 * 60000).toISOString(),
-        availableEngineers: []
-      }],
-      suggestedTime: tomorrow.toISOString()
+      slots: topSlots,
+      suggestedTime: topSlots[0]?.start
     };
+  } catch (error) {
+    console.error('Error checking availability:', error);
+    return getDefaultSlots((engineers as Array<{ userId: string; name: string }>).map(e => e.userId), event.urgency || 'medium');
   }
 };
 
-// TODO: Implement time window based on urgency
-// function getTimeWindow(urgency: string): { start: Date; end: Date } {
-//   const now = new Date();
-//   const start = new Date(now);
-//   const end = new Date(now);
-//   
-//   switch (urgency) {
-//     case 'high':
-//     case 'critical':
-//       // Next 24 hours
-//       end.setDate(end.getDate() + 1);
-//       break;
-//     case 'medium':
-//       // Next 3 days
-//       end.setDate(end.getDate() + 3);
-//       break;
-//     default:
-//       // Next week
-//       end.setDate(end.getDate() + 7);
-//   }
-//   
-//   return { start, end };
-// }
+// Generate default slots when calendar is not available
+function getDefaultSlots(engineerUserIds: string[], urgency: string): AvailabilityResult {
+  const now = new Date();
+  const slots: SlotWithEngineers[] = [];
+  
+  // Start from next business hour
+  const startTime = new Date(now);
+  
+  // First, skip weekends if we're currently on a weekend
+  while (startTime.getDay() === 0 || startTime.getDay() === 6) {
+    startTime.setDate(startTime.getDate() + 1);
+    startTime.setHours(9, 0, 0, 0); // Set to 9 AM on the next weekday
+  }
+  
+  // Then handle business hours
+  if (startTime.getHours() >= 17) {
+    // After 5 PM, start from next day 9 AM
+    startTime.setDate(startTime.getDate() + 1);
+    startTime.setHours(9, 0, 0, 0);
+    // Skip weekend if next day is weekend
+    while (startTime.getDay() === 0 || startTime.getDay() === 6) {
+      startTime.setDate(startTime.getDate() + 1);
+    }
+  } else if (startTime.getHours() < 9) {
+    // Before 9 AM, start from 9 AM same day
+    startTime.setHours(9, 0, 0, 0);
+  } else {
+    // Round to next 30-minute slot
+    startTime.setMinutes(Math.ceil(startTime.getMinutes() / 30) * 30, 0, 0);
+  }
+  
+  // Generate slots based on urgency
+  const slotsToGenerate = urgency === 'high' ? 3 : 5;
+  const slotDuration = 30; // minutes
+  
+  let currentTime = new Date(startTime);
+  while (slots.length < slotsToGenerate) {
+    // Skip weekends
+    if (currentTime.getDay() === 0 || currentTime.getDay() === 6) {
+      currentTime.setDate(currentTime.getDate() + 1);
+      currentTime.setHours(9, 0, 0, 0);
+      continue;
+    }
+    
+    // Skip non-business hours
+    if (currentTime.getHours() >= 17) {
+      currentTime.setDate(currentTime.getDate() + 1);
+      currentTime.setHours(9, 0, 0, 0);
+      continue;
+    }
+    
+    const endTime = new Date(currentTime);
+    endTime.setMinutes(endTime.getMinutes() + slotDuration);
+    
+    slots.push({
+      start: currentTime.toISOString(),
+      end: endTime.toISOString(),
+      availableEngineers: engineerUserIds // Assume all are available
+    });
+    
+    // Move to next slot
+    currentTime = new Date(endTime);
+    currentTime.setMinutes(currentTime.getMinutes() + 30); // 30-minute gaps
+  }
+  
+  return {
+    slots,
+    suggestedTime: slots[0]?.start
+  };
+}
 
 interface TimeSlot {
   start: string;

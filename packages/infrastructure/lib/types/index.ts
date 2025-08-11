@@ -8,6 +8,7 @@ export interface LambdaFunctions {
   bugQuestions: lambda.Function;
   bugProcessResponse: lambda.Function;
   bugUpdate: lambda.Function;
+  bugEnhance: lambda.Function;
   bugFindEngineers: lambda.Function;
   bugCreateChannel: lambda.Function;
   bugSave: lambda.Function;
@@ -15,7 +16,11 @@ export interface LambdaFunctions {
   bugResponseHandler: lambda.Function;
   calendarCheckAvailability: lambda.Function;
   calendarScheduleMeeting: lambda.Function;
+  bugTriageCheckAvailability: lambda.Function;
+  bugTriageScheduleMeeting: lambda.Function;
+  calendarOauthCallback: lambda.Function;
   slackNotify: lambda.Function;
+  profileSyncWorkspace: lambda.Function;
 }
 
 export interface DynamoDBTables {
@@ -28,6 +33,8 @@ export interface DynamoDBTables {
   areaExpertiseTable: dynamodb.Table;
   workflowsTable: dynamodb.Table;
   executionsTable: dynamodb.Table;
+  profileEngramsTable: dynamodb.Table;
+  userIdMappingsTable: dynamodb.Table;
 }
 
 export interface StageConfig {
@@ -44,6 +51,5 @@ export interface EnvironmentConfig {
   GOOGLE_REDIRECT_URI: string;
   INTERNAL_API_KEY: string;
   REDIS_URL?: string;
-  REDIS_PASSWORD?: string;
   AWS_REGION?: string;
 }

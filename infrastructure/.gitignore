@@ -1,0 +1,15 @@
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# TypeScript build output
+dist/
+*.js
+*.d.ts
+*.js.map
+
+# Dependency directories
+node_modules/
+
+# CDK Context
+cdk.context.json

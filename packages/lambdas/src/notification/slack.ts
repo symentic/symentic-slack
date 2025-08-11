@@ -1,6 +1,8 @@
 import { Handler } from 'aws-lambda';
 import { WebClient } from '@slack/web-api';
 import { BugReport } from '@symentic/core';
+import { extractPayload, extractArrayPayload } from '../utils/step-functions';
+import { SlackBlock, Engineer } from '../bug-triage/types';
 
 interface SlackNotificationEvent {
   action: string;
@@ -11,7 +13,36 @@ interface SlackNotificationEvent {
     slackClient?: string;
   };
   threadTs: string;
-  [key: string]: any;
+  questions?: {
+    Payload?: {
+      acknowledgment?: string;
+      questions: string[];
+    };
+  } | {
+    acknowledgment?: string;
+    questions: string[];
+  };
+  bugReport?: {
+    Payload?: BugReport;
+  } | BugReport;
+  engineers?: {
+    Payload?: Array<{
+      userId: string;
+      name: string;
+    }>;
+  } | Array<{
+    userId: string;
+    name: string;
+  }>;
+  meeting?: {
+    Payload?: {
+      startTime: string;
+      meetingId: string;
+    };
+  } | {
+    startTime: string;
+    meetingId: string;
+  };
 }
 
 export const handler: Handler<SlackNotificationEvent> = async (event) => {
@@ -37,6 +68,10 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
         await sendCompletionMessage(slack, event);
         break;
         
+      case 'maxAttemptsReached':
+        await sendMaxAttemptsMessage(slack, event);
+        break;
+        
       default:
         console.error('Unknown action:', event.action);
     }
@@ -47,34 +82,53 @@ export const handler: Handler<SlackNotificationEvent> = async (event) => {
 };
 
 async function sendBugQuestions(slack: WebClient, event: SlackNotificationEvent) {
-  const questions = event.questions.questions as string[];
+  const questionsData = extractPayload(event.questions);
+  console.log('Received questions data:', JSON.stringify(questionsData, null, 2));
+  
+  if (!questionsData || !questionsData.questions) {
+    throw new Error('Questions not provided');
+  }
+  const questions = questionsData.questions;
+  const acknowledgment = questionsData.acknowledgment;
+  
+  // Build the message as one flowing conversation
+  let messageText = acknowledgment || '';
+  
+  // If there's a question, it should already be part of the acknowledgment for natural flow
+  // But if not, add it with spacing
+  if (questions.length > 0 && messageText && !messageText.includes('?')) {
+    messageText += ' ' + questions[0]; // Add as continuation
+  } else if (questions.length > 0 && !messageText) {
+    messageText = questions[0]; // Fallback if no acknowledgment
+  }
+  
+  const blocks: SlackBlock[] = [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: messageText
+      }
+    }
+  ];
+  
+  // Only add the "Feel free to answer" text if there are actually questions
+  if (questions.length > 0) {
+    blocks.push({
+      type: 'context',
+      elements: [
+        {
+          type: 'mrkdwn',
+          text: '_Feel free to answer in any order, or type "cancel" if you want to stop._'
+        }
+      ]
+    });
+  }
   
   await slack.chat.postMessage({
     channel: event.context.channelId,
     thread_ts: event.threadTs,
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: '*To help resolve this issue, I need some additional information:*'
-        }
-      },
-      ...questions.map((q, i) => ({
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `${i + 1}. ${q}`
-        }
-      })),
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: '_Please provide as much detail as possible. Type "cancel" to stop the bug report._'
-        }
-      }
-    ]
+    blocks
   });
 }
 
@@ -95,34 +149,101 @@ async function sendTimeoutMessage(slack: WebClient, event: SlackNotificationEven
 }
 
 async function sendCompletionMessage(slack: WebClient, event: SlackNotificationEvent) {
-  const bugReport = event.bugReport as BugReport;
+  const bugReport = extractPayload(event.bugReport);
+  const engineers = extractArrayPayload(event.engineers);
+  const meetingData = extractPayload(event.meeting);
   
-  const blocks: any[] = [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `✅ *Bug Report Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}`
-      }
-    }
-  ];
+  if (!bugReport) {
+    throw new Error('Bug report not provided');
+  }
   
-  if (event.engineers && event.engineers.length > 0) {
+  // Check if this is a duplicate bug
+  const isDuplicate = !!bugReport.duplicateOf;
+  const bugNumber = bugReport.bugNumber ? `#${bugReport.bugNumber}` : '';
+  
+  const blocks: SlackBlock[] = [];
+  
+  if (isDuplicate) {
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Assigned to:* ${event.engineers.map((e: any) => `<@${e.userId}>`).join(', ')}`
+        text: `⚠️ *Duplicate Bug Detected!*\n\nThis appears to be a duplicate of an existing bug. Your report has been added to the existing bug channel.`
       }
+    });
+    
+    if (bugReport.triageChannel) {
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Bug ${bugNumber}:* <#${bugReport.triageChannel}>\n*Original Bug:* ${bugReport.duplicateOf}\n*Severity:* ${bugReport.severity || 'Medium'}`
+        }
+      });
+    }
+  } else {
+    const threadLink = bugReport.threadTs && bugReport.channelId
+      ? `https://slack.com/archives/${bugReport.channelId}/p${bugReport.threadTs.replace('.', '')}`
+      : null;
+    
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `✅ *Bug Report ${bugNumber} Created Successfully!*\n*ID:* ${bugReport.bugId}\n*Severity:* ${bugReport.severity || 'Medium'}${threadLink ? `\n<${threadLink}|View conversation thread>` : ''}`
+      }
+    });
+    
+    // Show similar bugs if any
+    if (bugReport.relatedBugs && bugReport.relatedBugs.length > 0) {
+      blocks.push({
+        type: 'context',
+        elements: [{
+          type: 'mrkdwn',
+          text: `ℹ️ Found ${bugReport.relatedBugs.length} similar bug(s) that might be related`
+        }]
+      });
+    }
+  }
+  
+  // Engineers info with memory context
+  if (engineers.length > 0) {
+    blocks.push({
+      type: 'divider'
+    });
+    blocks.push({
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*Based on my memory, here are the engineers best suited to fix this:*`
+      }
+    });
+    
+    // Hardcoded engineer profiles for demo
+    const engineerProfiles: Record<string, string> = {
+      'Richard Huang': 'Senior backend engineer specializing in payment systems and transaction processing. He recently fixed similar payment gateway issues.',
+      'Leo Gao': 'Full-stack engineer with expertise in frontend payment flows and API integrations. Led the recent payment system refactor.'
+    };
+    
+    engineers.forEach((engineer: Engineer & { assignmentReason?: string }) => {
+      const profile = engineerProfiles[engineer.name] || 'Expert in this area based on past contributions.';
+      blocks.push({
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `• <@${engineer.userId}> - *${engineer.name}*\n  _${profile}_`
+        }
+      });
     });
   }
   
-  if (event.meeting) {
+  // Meeting info
+  if (meetingData) {
     blocks.push({
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: `*Triage Meeting:* ${new Date(event.meeting.startTime).toLocaleString()}`
+        text: `*Triage Meeting:* ${new Date(meetingData.startTime).toLocaleString()}`
       }
     });
   }
@@ -131,5 +252,37 @@ async function sendCompletionMessage(slack: WebClient, event: SlackNotificationE
     channel: event.context.channelId,
     thread_ts: event.threadTs,
     blocks
+  });
+}
+
+async function sendMaxAttemptsMessage(slack: WebClient, event: SlackNotificationEvent) {
+  const bugReport = extractPayload(event.bugReport);
+  
+  await slack.chat.postMessage({
+    channel: event.context.channelId,
+    thread_ts: event.threadTs,
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '⚠️ *Maximum attempts reached for bug report*'
+        }
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'I was unable to gather enough information after multiple attempts. The bug report has been saved with the available information.'
+        }
+      },
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `*Summary:* ${(bugReport as BugReport | undefined)?.description || 'No description available'}\n*Status:* Incomplete - manual review required`
+        }
+      }
+    ]
   });
 }

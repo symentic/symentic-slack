@@ -52,7 +52,7 @@ packages/
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd semantic-slack
+cd symentic-slack
 ```
 
 2. Install dependencies:

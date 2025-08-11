@@ -39,37 +39,42 @@ export class LambdaFunctionsConstruct extends Construct {
 
     // Define Lambda functions
     const functionDefinitions = [
-      { name: 'router', entry: 'src/router/index.ts', handler: 'handler', memory: 512 },
-      { name: 'bugAnalyze', entry: 'src/bug-triage/analyze.ts', handler: 'handler' },
-      { name: 'bugQuestions', entry: 'src/bug-triage/questions.ts', handler: 'handler' },
-      { name: 'bugProcessResponse', entry: 'src/bug-triage/process-response.ts', handler: 'handler' },
-      { name: 'bugUpdate', entry: 'src/bug-triage/update-bug.ts', handler: 'handler' },
-      { name: 'bugFindEngineers', entry: 'src/bug-triage/find-engineers.ts', handler: 'handler' },
-      { name: 'bugCreateChannel', entry: 'src/bug-triage/create-channel.ts', handler: 'handler' },
-      { name: 'bugSave', entry: 'src/bug-triage/save-bug.ts', handler: 'handler' },
-      { name: 'bugTrackExecution', entry: 'src/bug-triage/track-execution.ts', handler: 'handler' },
-      { name: 'bugResponseHandler', entry: 'src/bug-triage/response-handler.ts', handler: 'handler' },
-      { name: 'calendarCheckAvailability', entry: 'src/calendar/check-availability.ts', handler: 'handler' },
-      { name: 'calendarScheduleMeeting', entry: 'src/calendar/schedule-meeting.ts', handler: 'handler' },
-      { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler' },
+      { name: 'router', entry: 'src/router/index.ts', handler: 'handler', memory: 1024 },
+      { name: 'bugAnalyze', entry: 'src/bug-triage/analyze.ts', handler: 'handler', memory: 1024 },
+      { name: 'bugQuestions', entry: 'src/bug-triage/questions.ts', handler: 'handler', memory: 1024 },
+      { name: 'bugProcessResponse', entry: 'src/bug-triage/process-response.ts', handler: 'handler', memory: 512 },
+      { name: 'bugUpdate', entry: 'src/bug-triage/update-bug.ts', handler: 'handler', memory: 512 },
+      { name: 'bugEnhance', entry: 'src/bug-triage/enhance.ts', handler: 'handler', memory: 1024 },
+      { name: 'bugFindEngineers', entry: 'src/bug-triage/find-engineers.ts', handler: 'handler', memory: 512 },
+      { name: 'bugCreateChannel', entry: 'src/bug-triage/create-channel.ts', handler: 'handler', memory: 512 },
+      { name: 'bugSave', entry: 'src/bug-triage/save-bug.ts', handler: 'handler', memory: 512 },
+      { name: 'bugResponseHandler', entry: 'src/bug-triage/response-handler.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarCheckAvailability', entry: 'src/calendar/check-availability.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarScheduleMeeting', entry: 'src/calendar/schedule-meeting.ts', handler: 'handler', memory: 512 },
+      { name: 'bugTriageCheckAvailability', entry: 'src/calendar/bug-triage-check-availability.ts', handler: 'handler', memory: 512 },
+      { name: 'bugTriageScheduleMeeting', entry: 'src/calendar/bug-triage-schedule-meeting.ts', handler: 'handler', memory: 512 },
+      // OAuth callback is now handled in the router Lambda
+      // { name: 'calendarOauthCallback', entry: 'src/calendar/oauth-callback.ts', handler: 'handler' },
+      { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler', memory: 512 },
+      { name: 'profileSyncWorkspace', entry: 'src/profile-engram/sync-workspace.ts', handler: 'handler', memory: 512 },
     ];
 
     // Create Lambda functions
-    const functions: any = {};
+    const functions: Record<string, lambda.Function> = {};
     functionDefinitions.forEach(def => {
       const functionProps: lambdaNodejs.NodejsFunctionProps = {
-        functionName: `semantic-slack-bot-${stage}-${def.name}`,
+        functionName: `symentic-slack-bot-${stage}-${def.name}`,
         runtime: lambda.Runtime.NODEJS_20_X,
         handler: def.handler,
         entry: path.join(__dirname, '../../../lambdas', def.entry),
         environment,
         memorySize: def.memory || 256,
-        timeout: cdk.Duration.seconds(30),
+        timeout: def.name === 'router' ? cdk.Duration.seconds(10) : cdk.Duration.seconds(30),
         role: this.role,
         logRetention: logs.RetentionDays.ONE_WEEK,
         bundling: {
-          externalModules: ['aws-sdk'], // AWS SDK is available in the Lambda runtime
-          nodeModules: ['@slack/bolt', '@slack/web-api', 'aws-lambda'], // Include these in bundle
+          externalModules: [], // AWS SDK v3 needs to be bundled in Node.js 20.x runtime
+          // Don't mark Slack modules as external - they need to be bundled
           format: lambdaNodejs.OutputFormat.CJS, // CommonJS format
           target: 'node20',
         },
@@ -92,7 +97,7 @@ export class LambdaFunctionsConstruct extends Construct {
       })
     );
 
-    this.functions = functions as LambdaFunctions;
+    this.functions = functions as unknown as LambdaFunctions;
   }
 
   private createLambdaRole(tables: DynamoDBTables, bugResponseQueue: sqs.Queue): iam.Role {
@@ -124,6 +129,12 @@ export class LambdaFunctionsConstruct extends Construct {
       resources: ['*'],
     }));
 
+    // Add Lambda invoke permissions for profile sync
+    role.addToPolicy(new iam.PolicyStatement({
+      actions: ['lambda:InvokeFunction'],
+      resources: ['*'], // You could restrict this to specific functions if needed
+    }));
+
     return role;
   }
 
@@ -152,15 +163,14 @@ export class LambdaFunctionsConstruct extends Construct {
       AREA_EXPERTISE_TABLE: tables.areaExpertiseTable.tableName,
       WORKFLOWS_TABLE: tables.workflowsTable.tableName,
       EXECUTIONS_TABLE: tables.executionsTable.tableName,
+      PROFILE_ENGRAMS_TABLE: tables.profileEngramsTable.tableName,
+      USER_ID_MAPPINGS_TABLE: tables.userIdMappingsTable.tableName,
       BUG_RESPONSE_QUEUE_URL: bugResponseQueue.queueUrl,
     };
 
     // Add optional environment variables if they exist
     if (envConfig.REDIS_URL) {
       env.REDIS_URL = envConfig.REDIS_URL;
-    }
-    if (envConfig.REDIS_PASSWORD) {
-      env.REDIS_PASSWORD = envConfig.REDIS_PASSWORD;
     }
     // AWS_REGION is automatically set by Lambda runtime
 

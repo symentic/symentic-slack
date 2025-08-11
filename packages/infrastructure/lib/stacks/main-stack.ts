@@ -2,8 +2,6 @@ import * as cdk from 'aws-cdk-lib';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import { Construct } from 'constructs';
-import * as path from 'path';
-import * as fs from 'fs';
 import { DynamoDBTablesConstruct } from '../constructs/dynamodb-tables';
 import { LambdaFunctionsConstruct } from '../constructs/lambda-functions';
 import { VpcConstruct } from '../constructs/vpc';
@@ -47,7 +45,7 @@ export class MainStack extends cdk.Stack {
     this.tables = tablesConstruct.tables;
 
     // Create SQS Queue
-    this.bugResponseQueue = this.createSQSQueue();
+    this.bugResponseQueue = this.createSQSQueue('BugResponseQueue');
 
     // Update environment config with Redis endpoint
     const updatedEnvConfig = {
@@ -99,14 +97,13 @@ export class MainStack extends cdk.Stack {
       GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI!,
       INTERNAL_API_KEY: process.env.INTERNAL_API_KEY!,
       REDIS_URL: process.env.REDIS_URL,
-      REDIS_PASSWORD: process.env.REDIS_PASSWORD,
       AWS_REGION: process.env.AWS_REGION,
     };
   }
 
-  private createSQSQueue(): sqs.Queue {
-    return new sqs.Queue(this, 'BugResponseQueue', {
-      queueName: `BugResponseQueue-${this.stage}`,
+  private createSQSQueue(name: string): sqs.Queue {
+    return new sqs.Queue(this, name, {
+      queueName: `symentic-${name}-${this.stage}`,
       visibilityTimeout: cdk.Duration.seconds(300),
       retentionPeriod: cdk.Duration.hours(1),
     });
@@ -114,7 +111,7 @@ export class MainStack extends cdk.Stack {
 
   private createApiGateway(): void {
     const api = new apigateway.RestApi(this, 'SlackBotApi', {
-      restApiName: `semantic-slack-bot-${this.stage}`,
+              restApiName: `symentic-slack-bot-${this.stage}`,
       deployOptions: {
         stageName: this.stage,
         loggingLevel: apigateway.MethodLoggingLevel.INFO,
@@ -135,6 +132,9 @@ export class MainStack extends cdk.Stack {
       'POST',
       new apigateway.LambdaIntegration(this.lambdaFunctions.router)
     );
+    
+    // OAuth endpoint is created manually in API Gateway to avoid conflicts
+    // The /auth/google/callback route is already configured to use the router Lambda
 
     // Output API endpoint
     new cdk.CfnOutput(this, 'ApiEndpoint', {

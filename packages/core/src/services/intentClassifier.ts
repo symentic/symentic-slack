@@ -22,9 +22,9 @@ export class IntentClassifier {
     ];
 
 
-    // Use GPT-3.5 for simple, clear commands
+    // Use GPT-4o-mini for simple, clear commands
     if (simplePatterns.some(pattern => pattern.test(message))) {
-      return 'gpt-3.5-turbo';
+      return 'gpt-4o-mini';
     }
 
     // Check for emergency/critical indicators
@@ -39,37 +39,97 @@ export class IntentClassifier {
       return 'gpt-4o';
     }
 
-    // For complex but non-emergency messages, still use gpt-3.5-turbo for cost efficiency
+    // For complex but non-emergency messages, use gpt-4o-mini
     // The specific agents (like bug triage) will use their own model preferences
 
-    // Default to GPT-3.5 for cost efficiency
-    return 'gpt-3.5-turbo';
+    // Default to GPT-4o-mini (10 million free tokens per day)
+    return 'gpt-4o-mini';
   }
 
   async classifyIntent(options: ClassificationOptions & { threadContext?: { hasBugTriage?: boolean } }): Promise<IntentResult> {
     const { message, userId, channelId, recentContext, threadContext } = options;
+    
+    // Quick filter disabled for demo - let ChatGPT handle all classification
+    // const insectPatterns = [
+    //   /\b(bug|bugs|insect|insects?)\s+(on|in)\s+(the|my)\s+(ceiling|wall|floor|room|house|office)/i,
+    //   /\b(spider|ant|fly|flies|mosquito|roach|cockroach|beetle)s?\b/i,
+    //   /\b(pest|infestation|exterminator)\b/i,
+    //   /\b(crawling|flying)\s+(bug|insect)s?\b/i
+    // ];
+    // 
+    // if (insectPatterns.some(pattern => pattern.test(message))) {
+    //   return {
+    //     intent: 'general.chatter',
+    //     confidence: 0.9,
+    //     entities: {},
+    //     modelUsed: 'pattern-match',
+    //     requiresFollowUp: []
+    //   };
+    // }
+    
     const model = this.selectModel(message);
 
-    const systemPrompt = `You are an intent classifier for a Slack bot. Analyze the message and extract:
-1. Primary intent (use dot notation like "calendar.schedule", "bug.report", "task.create")
-2. Confidence level (0-1)
+    const systemPrompt = `You are an intent classifier for a Slack bot that helps with software development tasks. Analyze the message and extract:
+1. Intent (use dot notation like "calendar.schedule", "bug.report", "task.create")
+2. Confidence score (0-1)
 3. Entities (participants, dates, priorities, etc.)
 4. Any missing required information
 
 Available intents:
 - calendar.schedule, calendar.check, calendar.cancel, calendar.reschedule
-- bug.report, bug.status, bug.update, bug.response, bug.cancel
+- bug.report, bug.status, bug.update, bug.response, bug.cancel (SOFTWARE/CODE BUGS ONLY)
 - task.create, task.assign, task.status, task.complete
 - reminder.set, reminder.list
 - general.help, general.status, general.greeting, general.chatter, general.cancel
 - query.search, query.ask
 
+CRITICAL: Return JSON with these EXACT field names:
+- "intent" (NOT "primary_intent")
+- "confidence" (NOT "confidence_level")
+- "entities" (object with extracted entities)
+- "missingInfo" (NOT "missing_information")
+
+IMPORTANT: "bug.report" is ONLY for software bugs, coding errors, system issues, or technical problems.
+DO NOT classify as "bug.report" for:
+- Physical insects or pests (spiders, ants, flies, etc.)
+- Physical defects in buildings or objects
+- Non-technical issues
+
+Context clues for software bugs:
+- Error messages, crashes, unexpected behavior
+- Feature not working, system down, payment failed, payment errors
+- Code, API, database, server issues
+- Performance problems, UI glitches
+- Messages containing "error" with system names (payment system, login system, etc.)
+- Messages about something not working or being broken
+
 Special handling:
 - If in a thread with active bug triage, classify follow-ups as "bug.response"
+- Greetings (hi, hello, hey) should be "general.greeting"
+- Questions about capabilities should be "general.help"
 - Casual conversation or off-topic messages should be "general.chatter"
 - "Cancel" or "stop" should map to appropriate cancel intent
+- Physical bugs/insects should be "general.chatter"
 
-Respond in JSON format only.`;
+Intent classification rules:
+- Classify as bug.report when message contains: "error", "bug", "issue", "problem", "broken", "not working", "failed", "crash", "down" in technical context
+- Phrases like "error with [system]", "[system] error", "[feature] not working", "bug with [feature]", "bug in [system]", "I found a bug", "found a bug with" are strong bug indicators
+- Messages starting with "I found a bug" should ALWAYS be classified as bug.report
+- Only use general.greeting if the bot is specifically mentioned (e.g., "@symentic hi", "hello symentic")
+- Only use general.help when explicitly asking what the bot can do
+- For greetings without bot mention (just "hi", "hello"), use general.chatter
+- When unsure or message is ambiguous, use general.chatter
+- Set confidence < 0.5 for unclear intents
+
+Respond with EXACTLY this JSON format:
+{
+  "intent": "bug.report",
+  "confidence": 0.9,
+  "entities": {},
+  "missingInfo": []
+}
+
+IMPORTANT: Use these exact field names: "intent", "confidence", "entities", "missingInfo"`;
 
     const userPrompt = `Message: "${message}"
 User: ${userId}
@@ -78,24 +138,43 @@ ${recentContext ? `Recent context: ${recentContext.join(' | ')}` : ''}
 ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bug triage conversation. Classify as "bug.response" unless it\'s clearly "bug.cancel" (cancel, stop, nevermind, etc.)' : ''}`;
 
     try {
+      console.log(`Calling OpenAI intent classification with model: ${model}`);
       const response = await openAIService.classifyWithModel(
         systemPrompt,
         userPrompt,
         model
       );
+      console.log(`OpenAI response:`, response);
+      
+      if (!response) {
+        throw new Error('Empty response from OpenAI');
+      }
 
       const classification = JSON.parse(response);
       
+      if (!classification || typeof classification !== 'object') {
+        throw new Error('Invalid classification format from OpenAI');
+      }
+      
+      // Handle both old and new field names from OpenAI
+      const intent = classification.intent || classification.primary_intent;
+      const confidence = classification.confidence || classification.confidence_level;
+      const missingInfo = classification.missingInfo || classification.missing_information || [];
+      
+      console.log(`AI Classification: ${intent} (${confidence})`);
+      
       // Ensure all required fields
       return {
-        intent: classification.intent || 'general.help',
-        confidence: classification.confidence || 0.5,
+        intent: intent || 'general.help',
+        confidence: confidence || 0.5,
         entities: classification.entities || {},
         modelUsed: model,
-        requiresFollowUp: classification.missingInfo || []
+        requiresFollowUp: missingInfo
       };
     } catch (error) {
       console.error('Intent classification failed:', error);
+      console.error('Error details:', error instanceof Error ? error.message : 'Unknown error');
+      console.error('Stack trace:', error instanceof Error ? error.stack : 'No stack trace');
       
       // Fallback classification
       return {
@@ -112,7 +191,7 @@ ${threadContext?.hasBugTriage ? 'IMPORTANT: This message is part of an active bu
   async batchClassify(messages: ClassificationOptions[]): Promise<IntentResult[]> {
     // For simple messages, batch them to GPT-3.5
     // For complex ones, process individually with GPT-4
-    const simpleMessages = messages.filter(m => this.selectModel(m.message) === 'gpt-3.5-turbo');
+    const simpleMessages = messages.filter(m => this.selectModel(m.message) === 'gpt-4o-mini');
     const complexMessages = messages.filter(m => ['gpt-4o-mini', 'gpt-4o'].includes(this.selectModel(m.message)));
 
     const results: IntentResult[] = [];

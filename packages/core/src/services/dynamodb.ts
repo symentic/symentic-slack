@@ -5,7 +5,8 @@ import {
   GetCommand, 
   QueryCommand,
   UpdateCommand,
-  ScanCommand
+  ScanCommand,
+  DeleteCommand
 } from '@aws-sdk/lib-dynamodb';
 import { v4 as uuidv4 } from 'uuid';
 import { UserProfile, Engram, BugReport, Meeting, AreaExpertise } from '../types/domain';
@@ -25,7 +26,7 @@ export class DynamoDBService {
   // User profile management
   async saveUserProfile(userId: string, profile: Partial<UserProfile>): Promise<void> {
     const params = {
-      TableName: process.env.USERS_TABLE || 'SemanticUsers',
+      TableName: process.env.USERS_TABLE || 'SymenticUsers',
       Item: {
         userId,
         ...profile,
@@ -38,7 +39,7 @@ export class DynamoDBService {
 
   async getUserProfile(userId: string): Promise<UserProfile | null> {
     const params = {
-      TableName: process.env.USERS_TABLE || 'SemanticUsers',
+      TableName: process.env.USERS_TABLE || 'SymenticUsers',
       Key: { userId },
     };
 
@@ -49,7 +50,7 @@ export class DynamoDBService {
   // Workspace management
   async saveWorkspaceProfile(workspaceId: string, profile: Record<string, unknown>): Promise<void> {
     const params = {
-      TableName: process.env.WORKSPACES_TABLE || 'SemanticWorkspaces',
+      TableName: process.env.WORKSPACES_TABLE || 'SymenticWorkspaces',
       Item: {
         workspaceId,
         ...profile,
@@ -62,7 +63,7 @@ export class DynamoDBService {
 
   async getWorkspaceProfile(workspaceId: string): Promise<Record<string, unknown> | null> {
     const params = {
-      TableName: process.env.WORKSPACES_TABLE || 'SemanticWorkspaces',
+      TableName: process.env.WORKSPACES_TABLE || 'SymenticWorkspaces',
       Key: { workspaceId },
     };
 
@@ -79,7 +80,7 @@ export class DynamoDBService {
   }): Promise<string> {
     const engramId = uuidv4();
     const params = {
-      TableName: process.env.ENGRAMS_TABLE || 'SemanticEngrams',
+      TableName: process.env.ENGRAMS_TABLE || 'SymenticEngrams',
       Item: {
         engramId,
         ...engram,
@@ -93,7 +94,7 @@ export class DynamoDBService {
 
   async getUserEngrams(userId: string, limit: number = 50): Promise<Engram[]> {
     const params = {
-      TableName: process.env.ENGRAMS_TABLE || 'SemanticEngrams',
+      TableName: process.env.ENGRAMS_TABLE || 'SymenticEngrams',
       IndexName: 'userId-createdAt-index',
       KeyConditionExpression: 'userId = :userId',
       ExpressionAttributeValues: {
@@ -111,7 +112,7 @@ export class DynamoDBService {
   async saveBugReport(bugReport: Omit<BugReport, 'bugId'>): Promise<string> {
     const bugId = `BUG-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const params = {
-      TableName: process.env.BUG_REPORTS_TABLE || 'SemanticBugReports',
+      TableName: process.env.BUG_REPORTS_TABLE || 'SymenticBugReports',
       Item: {
         bugId,
         ...bugReport,
@@ -126,7 +127,7 @@ export class DynamoDBService {
 
   async getBugReport(bugId: string): Promise<BugReport | null> {
     const params = {
-      TableName: process.env.BUG_REPORTS_TABLE || 'SemanticBugReports',
+      TableName: process.env.BUG_REPORTS_TABLE || 'SymenticBugReports',
       Key: { bugId },
     };
 
@@ -146,7 +147,7 @@ export class DynamoDBService {
     });
 
     const params = {
-      TableName: process.env.BUG_REPORTS_TABLE || 'SemanticBugReports',
+      TableName: process.env.BUG_REPORTS_TABLE || 'SymenticBugReports',
       Key: { bugId },
       UpdateExpression: `SET ${updateExpressions.join(', ')}, updatedAt = :updatedAt`,
       ExpressionAttributeNames: expressionAttributeNames,
@@ -161,8 +162,10 @@ export class DynamoDBService {
 
   // Google Calendar OAuth token management
   async saveCalendarToken(userId: string, tokens: Record<string, unknown>): Promise<void> {
+    console.log(`Saving calendar tokens for user ${userId}:`, JSON.stringify(tokens, null, 2));
+    
     const params = {
-      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SemanticCalendarTokens',
+      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SymenticCalendarTokens',
       Item: {
         userId,
         tokens,
@@ -171,11 +174,23 @@ export class DynamoDBService {
     };
 
     await this.docClient.send(new PutCommand(params));
+    console.log(`Calendar tokens saved to DynamoDB for user ${userId}`);
+  }
+
+  async deleteCalendarToken(userId: string): Promise<void> {
+    const params = {
+      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SymenticCalendarTokens',
+      Key: {
+        userId,
+      },
+    };
+
+    await this.docClient.send(new DeleteCommand(params));
   }
 
   async getCalendarToken(userId: string): Promise<Record<string, unknown> | null> {
     const params = {
-      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SemanticCalendarTokens',
+      TableName: process.env.CALENDAR_TOKENS_TABLE || 'SymenticCalendarTokens',
       Key: { userId },
     };
 
@@ -183,11 +198,65 @@ export class DynamoDBService {
     return result.Item?.tokens || null;
   }
 
+  // User ID mapping management
+  async saveUserIdMapping(primaryUserId: string, alternateUserId: string, context?: Record<string, unknown>): Promise<void> {
+    const params = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      Item: {
+        primaryUserId,
+        alternateUserId,
+        context,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    await this.docClient.send(new PutCommand(params));
+  }
+
+  async getUserIdMapping(userId: string): Promise<{ primaryUserId: string; alternateUserId: string } | null> {
+    // First try to find if this is a primary user ID
+    const primaryParams = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      KeyConditionExpression: 'primaryUserId = :userId',
+      ExpressionAttributeValues: {
+        ':userId': userId,
+      },
+    };
+    
+    const primaryResult = await this.docClient.send(new QueryCommand(primaryParams));
+    if (primaryResult.Items && primaryResult.Items.length > 0) {
+      return {
+        primaryUserId: userId,
+        alternateUserId: primaryResult.Items[0].alternateUserId,
+      };
+    }
+
+    // If not found as primary, check if it's an alternate ID
+    const alternateParams = {
+      TableName: process.env.USER_ID_MAPPINGS_TABLE || 'SymenticUserIdMappings',
+      IndexName: 'AlternateUserIdIndex',
+      KeyConditionExpression: 'alternateUserId = :userId',
+      ExpressionAttributeValues: {
+        ':userId': userId,
+      },
+    };
+
+    const alternateResult = await this.docClient.send(new QueryCommand(alternateParams));
+    if (alternateResult.Items && alternateResult.Items.length > 0) {
+      return {
+        primaryUserId: alternateResult.Items[0].primaryUserId,
+        alternateUserId: userId,
+      };
+    }
+
+    return null;
+  }
+
   // Meeting management
   async saveMeeting(meeting: Omit<Meeting, 'meetingId'>): Promise<string> {
     const meetingId = uuidv4();
     const params = {
-      TableName: process.env.MEETINGS_TABLE || 'SemanticMeetings',
+      TableName: process.env.MEETINGS_TABLE || 'SymenticMeetings',
       Item: {
         meetingId,
         ...meeting,
@@ -201,7 +270,7 @@ export class DynamoDBService {
 
   async getMeeting(meetingId: string): Promise<Meeting | null> {
     const params = {
-      TableName: process.env.MEETINGS_TABLE || 'SemanticMeetings',
+      TableName: process.env.MEETINGS_TABLE || 'SymenticMeetings',
       Key: { meetingId },
     };
 
@@ -212,7 +281,7 @@ export class DynamoDBService {
   // Area expertise tracking
   async trackAreaExpertise(userId: string, area: string, bugId: string): Promise<void> {
     const params = {
-      TableName: process.env.AREA_EXPERTISE_TABLE || 'SemanticAreaExpertise',
+      TableName: process.env.AREA_EXPERTISE_TABLE || 'SymenticAreaExpertise',
       Item: {
         userId,
         area,
@@ -228,7 +297,7 @@ export class DynamoDBService {
       // If item exists, update it
       if ((error as Error).name === 'ConditionalCheckFailedException') {
         const updateParams = {
-          TableName: process.env.AREA_EXPERTISE_TABLE || 'SemanticAreaExpertise',
+          TableName: process.env.AREA_EXPERTISE_TABLE || 'SymenticAreaExpertise',
           Key: { userId, area },
           UpdateExpression: 'SET bugIds = list_append(bugIds, :bugId), lastWorkedOn = :date, #count = #count + :inc',
           ExpressionAttributeNames: {
@@ -249,7 +318,7 @@ export class DynamoDBService {
 
   async getAreaExperts(area: string, limit: number = 5): Promise<AreaExpertise[]> {
     const params = {
-      TableName: process.env.AREA_EXPERTISE_TABLE || 'SemanticAreaExpertise',
+      TableName: process.env.AREA_EXPERTISE_TABLE || 'SymenticAreaExpertise',
       IndexName: 'area-count-index',
       KeyConditionExpression: 'area = :area',
       ExpressionAttributeValues: {
@@ -270,7 +339,7 @@ export class DynamoDBService {
     keywords: string[];
   }): Promise<void> {
     const params = {
-      TableName: process.env.AREA_EXPERTISE_TABLE || 'SemanticAreaExpertise',
+      TableName: process.env.AREA_EXPERTISE_TABLE || 'SymenticAreaExpertise',
       Item: {
         userId: expertise.userId,
         area: expertise.area,
@@ -291,7 +360,7 @@ export class DynamoDBService {
     try {
       // Query all expertise records
       const params = {
-        TableName: process.env.AREA_EXPERTISE_TABLE || 'SemanticAreaExpertise',
+        TableName: process.env.AREA_EXPERTISE_TABLE || 'SymenticAreaExpertise',
       };
 
       const result = await this.docClient.send(new ScanCommand(params));

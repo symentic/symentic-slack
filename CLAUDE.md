@@ -2,6 +2,31 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with the Symentic Slack Bot codebase.
 
+## Important Guidelines
+
+### File Management and Duplicate Prevention
+**CRITICAL**: Always check if a file exists before creating a new one. Never create duplicate files with suffixes like " 2", " copy", or similar patterns.
+
+1. **Before creating any file**:
+   - Use the `Read` or `LS` tool to check if the file already exists
+   - If it exists, use `Edit` or `MultiEdit` to modify it instead
+   - Never create files with names like "filename 2.ts" or "filename copy.js"
+
+2. **When modifying files**:
+   - Always use `Edit` or `MultiEdit` on existing files
+   - Never create a duplicate and edit that instead
+   - If you get a file not found error, double-check the path and filename
+
+3. **CDK output files**:
+   - CDK generates files in `cdk.out/` directory - these are build artifacts
+   - Never manually create or duplicate CDK output files
+   - If you see duplicates like "manifest 2.json", they should be removed
+
+4. **Best practices**:
+   - Always prefer updating existing files over creating new ones
+   - Use exact file paths without spaces or special characters when possible
+   - If a file needs significant changes, modify it in place rather than creating a new version
+
 ## Project Overview
 
 The Symentic Slack Bot is a production-ready Node.js application that serves as the master AI agent for the Symentic platform. It's designed as an intelligent Slack bot that observes workspace activity, manages child agents, maintains memory across short and long-term storage, and provides automated workflows like bug triage with integrated calendar scheduling.
@@ -11,14 +36,25 @@ The Symentic Slack Bot is a production-ready Node.js application that serves as 
 ### Hybrid Architecture (Step Functions + Lambda)
 As of the latest update, the bot uses a hybrid architecture combining AWS Step Functions for complex workflows with Lambda functions for individual tasks. This provides better state management, visual debugging, and scalability.
 
+### Separation of Concerns
+Each component should have a single, well-defined responsibility:
+- **Router Lambda**: Only routes messages to appropriate workflows based on intent. Should NOT perform analysis or extract detailed information.
+- **Intent Classifier**: Only classifies the intent type (bug.report, calendar.schedule, etc.). Should NOT determine severity or perform detailed analysis.
+- **Analyze Lambda**: Performs detailed analysis using AI (ChatGPT/GPT-4), including:
+  - Bug severity determination (critical/high/medium/low)
+  - Emergency detection
+  - Completeness scoring
+  - Quality assessment
+  - Missing information identification
+- **Individual Feature Lambdas**: Handle specific tasks within their domain
+
 ### Core Stack
 - **Runtime**: Node.js 20.x with TypeScript
 - **Framework**: Slack Bolt SDK for Slack app functionality
 - **Deployment**: AWS Lambda with Serverless Framework
 - **Orchestration**: AWS Step Functions for complex workflows
 - **AI Models**:
-  - GPT-3.5-turbo: Intent classification, simple tasks
-  - GPT-4o-mini: Bug triage intelligence (default)
+  - GPT-4o-mini: Intent classification, simple tasks, bug triage (default - 10M free tokens/day)
   - GPT-4o: Emergency/critical bugs only
 - **Memory Storage**:
   - Short-term: In-memory (Redis optional)
@@ -37,14 +73,14 @@ As of the latest update, the bot uses a hybrid architecture combining AWS Step F
 - **API Gateway**: HTTP endpoints for Slack events
 - **SQS**: Queue for handling user responses in workflows
 - **DynamoDB Tables**:
-  - `SemanticUsers`: User profiles and preferences
-  - `SemanticWorkspaces`: Workspace configurations
-  - `SemanticEngrams`: Long-term memory/knowledge storage
-  - `SemanticBugReports`: Bug tracking data
-  - `SemanticCalendarTokens`: OAuth tokens for calendar access
-  - `SemanticMeetings`: Scheduled meeting records
-  - `SemanticAreaExpertise`: Engineer expertise mapping
-  - `SemanticWorkflows`: Active workflow references for thread routing
+  - `SymenticUsers`: User profiles and preferences
+- `SymenticWorkspaces`: Workspace configurations
+- `SymenticEngrams`: Long-term memory/knowledge storage
+- `SymenticBugReports`: Bug tracking data
+- `SymenticCalendarTokens`: OAuth tokens for calendar access
+- `SymenticMeetings`: Scheduled meeting records
+- `SymenticAreaExpertise`: Engineer expertise mapping
+- `SymenticWorkflows`: Active workflow references for thread routing
 
 ## Development Workflow
 
@@ -148,7 +184,7 @@ serverless deploy --stage prod
 1. **Message Received**: Slack sends event to Router Lambda via API Gateway
 2. **Thread Response Check**: If message is in active workflow thread, route to SQS
 3. **Pre-filtering**: For new messages, check if bot should respond
-4. **Intent Classification**: Use GPT-3.5-turbo to classify intent
+4. **Intent Classification**: Use GPT-4o-mini to classify intent
 5. **Workflow Routing**:
    - Simple intents: Handle directly in Router Lambda
    - Complex workflows: Start Step Function execution
@@ -216,14 +252,14 @@ GOOGLE_REDIRECT_URI=https://your-api/auth/google/callback
 INTERNAL_API_KEY=...
 
 # DynamoDB Tables (auto-generated by serverless.yml)
-USERS_TABLE=SemanticUsers-prod
-WORKSPACES_TABLE=SemanticWorkspaces-prod
-ENGRAMS_TABLE=SemanticEngrams-prod
-BUG_REPORTS_TABLE=SemanticBugReports-prod
-CALENDAR_TOKENS_TABLE=SemanticCalendarTokens-prod
-MEETINGS_TABLE=SemanticMeetings-prod
-AREA_EXPERTISE_TABLE=SemanticAreaExpertise-prod
-WORKFLOWS_TABLE=SemanticWorkflows-prod
+USERS_TABLE=SymenticUsers-prod
+WORKSPACES_TABLE=SymenticWorkspaces-prod
+ENGRAMS_TABLE=SymenticEngrams-prod
+BUG_REPORTS_TABLE=SymenticBugReports-prod
+CALENDAR_TOKENS_TABLE=SymenticCalendarTokens-prod
+MEETINGS_TABLE=SymenticMeetings-prod
+AREA_EXPERTISE_TABLE=SymenticAreaExpertise-prod
+WORKFLOWS_TABLE=SymenticWorkflows-prod
 
 # Step Functions and SQS (auto-generated)
 BUG_TRIAGE_STATE_MACHINE_ARN=arn:aws:states:...
@@ -246,6 +282,29 @@ Required OAuth scopes:
 4. **Memory Management**: Be mindful of Lambda cold starts
 5. **Rate Limits**: Respect Slack API rate limits (1 msg/sec)
 6. **Testing**: Write unit tests for new agents and handlers
+
+## Architectural Principles
+
+### Single Responsibility Principle
+- Each Lambda function should do ONE thing well
+- Router Lambda: Route messages (don't analyze content)
+- Intent Classifier: Classify intent type (don't determine details)
+- Analyze Lambda: Perform AI analysis (determine severity, quality, etc.)
+- Process Lambda: Process user responses
+- Update Lambda: Update bug reports with new information
+
+### Data Flow
+1. **Router** → Receives message, classifies intent, starts workflow
+2. **Analyze** → Uses AI to analyze bug quality and determine severity
+3. **Questions** → Generates follow-up questions if needed
+4. **Process Response** → Extracts information from user responses
+5. **Update** → Merges new information and updates severity if needed
+6. **Save** → Persists final bug report to DynamoDB
+
+### Important: Don't Mix Concerns
+- The router should NOT determine severity - that's the analyze lambda's job
+- The intent classifier should NOT extract detailed entities - just classify the intent type
+- Each lambda should trust the output of previous lambdas in the workflow
 
 ## Migration Guide (Monolithic → Hybrid Architecture)
 
@@ -294,7 +353,7 @@ Currently not implemented - all interactions are message-based
 ## Debugging
 
 ### CloudWatch Logs
-- Log group: `/aws/lambda/semantic-slack-bot-prod-app`
+- Log group: `/aws/lambda/symentic-slack-bot-prod-app`
 - Filter by request ID for specific invocations
 
 ### Local Testing
@@ -310,7 +369,7 @@ The bot is transitioning from a monolithic design to a scalable multi-agent arch
 
 #### 1. Intent Classification System
 - **Purpose**: Analyze incoming messages to determine intent and extract entities
-- **Model**: GPT-3.5-turbo for simple intents, GPT-4 for complex/ambiguous messages
+- **Model**: GPT-4o-mini for all intents, GPT-4o for emergency/critical messages
 - **Output**: Intent type, confidence score, extracted entities, required follow-ups
 - **Example**: "Schedule meeting tomorrow 2pm with John" → 
   ```json
@@ -326,20 +385,21 @@ The bot is transitioning from a monolithic design to a scalable multi-agent arch
   ```
 
 #### Model Selection Strategy
-- **GPT-3.5-turbo**: 
+- **GPT-4o-mini**: 
   - Intent classification for all requests
   - Entity extraction
   - Simple Q&A responses
   - Status updates and confirmations
   - General conversation
-  - Cost: ~$0.0015 per 1K tokens
+  - Bug triage intelligence (default)
+  - Cost: FREE (10 million tokens per day)
   
 - **GPT-4o-mini**: 
   - Bug triage intelligence (default)
   - Bug quality analysis
   - Contextual follow-up generation
   - Complex but non-critical analysis
-  - Cost: ~$0.00015 per 1K tokens (10x cheaper than GPT-3.5)
+  - Cost: FREE (10 million tokens per day)
 
 - **GPT-4o**: 
   - Emergency/critical bugs only
@@ -354,7 +414,7 @@ The bot is transitioning from a monolithic design to a scalable multi-agent arch
   if (emergencyIndicators.test(message)) {
     use GPT-4o // Only for emergency detection in classification
   } else {
-    use GPT-3.5-turbo // All other intent classification
+    use GPT-4o-mini // All other intent classification
   }
   
   // Bug triage
