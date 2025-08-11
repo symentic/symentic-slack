@@ -64,11 +64,10 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
   
   const slack = new WebClient(process.env.SLACK_BOT_TOKEN);
   
-  try {
-    let channelId: string = '';
-    let channelName: string = '';
-    let isExisting = false;
-    let bugNumber = bugReport.bugNumber;
+  let channelId: string = '';
+  let channelName: string = '';
+  let isExisting = false;
+  const bugNumber = bugReport.bugNumber;
     
     // Check if this is a duplicate bug with existing channel
     if (bugReport.channelId) {
@@ -150,7 +149,7 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
           channel: channelId,
           users: userIds.join(',')
         });
-      } catch (error: any) {
+      } catch (error) {
         // Users might already be in channel if reusing - this is expected
       }
     }
@@ -179,9 +178,6 @@ export const handler: Handler<CreateChannelEvent, ChannelResult> = async (event)
       isExisting,
       bugNumber
     };
-  } catch (error) {
-    throw error;
-  }
 };
 
 function createBugOverviewBlocks(

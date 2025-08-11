@@ -75,7 +75,7 @@ export const handler: Handler<EnhanceBugEvent, BugReportDataWithHistory> = async
     const enhanced = await openAIService.enhanceBugDescription(enhancedData);
     
     // Return the enhanced bug report
-    const enhancedBugReport: BugReportData = {
+    const enhancedBugReport: BugReportDataWithHistory = {
       ...bugReport,
       description: enhanced.enhancedDescription || completeData.description,
       reproductionSteps: enhanced.enhancedSteps || completeData.reproductionSteps,

@@ -11,7 +11,7 @@ import { redisService } from '@symentic/core';
 import { profileEngramService } from '@symentic/core';
 import { ProfileInteraction, SlackUserData } from '@symentic/core';
 import { googleCalendarService } from '@symentic/core';
-import { CalendarToken, CalendarEvent, BusySlot, SlackBlock } from './types';
+import { CalendarToken, CalendarEvent, BusySlot, SlackBlock, SlackInteraction } from './types';
 
 // Initialize Step Functions client with explicit configuration
 const stepFunctions = new SFNClient({
@@ -43,7 +43,7 @@ app.event('app_installed', async ({ event, client }) => {
   console.log('App installed event received:', event);
   
   try {
-    const businessId = (event as any).team_id;
+    const businessId = (event as { team_id: string }).team_id;
     
     // Invoke the sync Lambda directly
     const lambdaClient = new LambdaClient({ region: process.env.AWS_REGION || 'us-east-1' });
@@ -82,10 +82,10 @@ app.event('app_installed', async ({ event, client }) => {
 
 // Handle team join events (new users)
 app.event('team_join', async ({ event }) => {
-  console.log('New user joined:', (event as any).user);
+  console.log('New user joined:', (event as { user: unknown }).user);
   
   try {
-    const userEvent = event as any;
+    const userEvent = event as { user?: { team_id?: string; id?: string; real_name?: string; name?: string; profile?: { email?: string } }; team?: string };
     const businessId = userEvent.user?.team_id || userEvent.team || '';
     if (!businessId) {
       console.error('No team ID found in team_join event');
@@ -118,7 +118,7 @@ app.event('team_join', async ({ event }) => {
 
 // Handle user profile changes
 app.event('user_change', async ({ event }) => {
-  const userEvent = event as any;
+  const userEvent = event as { user?: SlackUserData & { team_id?: string }; team?: string };
   console.log('User profile changed:', userEvent.user?.id);
   
   try {
@@ -241,23 +241,6 @@ async function captureInteractionForEngram(
   }
 }
 
-// Simple message filter
-function shouldProcessMessage(message: SlackMessage): boolean {
-  // Skip bot messages
-  if (message.bot_id || message.subtype === 'bot_message') return false;
-  
-  // Process all DMs
-  if (message.channel_type === 'im') return true;
-  
-  // Process if bot is mentioned
-  const botMention = /<@U\w+>/.exec(message.text || '');
-  if (botMention) return true;
-  
-  // Process if contains trigger keywords
-  const text = (message.text || '').toLowerCase();
-  const triggers = ['bug', 'issue', 'error', 'problem', 'schedule', 'meeting', 'help'];
-  return triggers.some(trigger => text.includes(trigger));
-}
 
 // Handle slash commands
 app.command('/connect-calendar', async ({ command, ack, say }) => {
@@ -596,7 +579,10 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
           }
         });
         
-        busySlots = freeBusyResponse.data.calendars?.primary?.busy || [];
+        busySlots = (freeBusyResponse.data.calendars?.primary?.busy || []).map(slot => ({
+          start: slot.start || '',
+          end: slot.end || ''
+        }));
         
       } catch (error) {
         console.error('Error accessing calendar:', error);
@@ -689,8 +675,10 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
       });
       
       events.forEach(event => {
-        const startDate = new Date(event.start);
-        const endDate = new Date(event.end);
+        const startStr = typeof event.start === 'string' ? event.start : event.start?.dateTime || event.start?.date || '';
+        const endStr = typeof event.end === 'string' ? event.end : event.end?.dateTime || event.end?.date || '';
+        const startDate = new Date(startStr);
+        const endDate = new Date(endStr);
         
         // Format times in user's timezone
         const formattedStart = startDate.toLocaleString('en-US', {
@@ -1054,7 +1042,7 @@ app.message(async ({ message, say, client, body }) => {
 // Start bug triage Step Function
 async function startBugTriageWorkflow(
   message: SlackMessage,
-  intent: { intent: string; entities?: { severity?: string }; confidence: number },
+  _intent: { intent: string; entities?: { severity?: string }; confidence: number },
   client: WebClient // WebClient from @slack/bolt
 ) {
   console.log('=== startBugTriageWorkflow STARTED ===');
@@ -1163,13 +1151,15 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
   await ack();
   
   try {
-    const payload = body as any;
-    const buttonValue = JSON.parse(payload.actions[0].value);
-    const selectedTimeValue = payload.state?.values?.[Object.keys(payload.state.values)[0]]?.meeting_time_selection?.selected_option?.value;
+    const payload = body as SlackInteraction;
+    const buttonValue = JSON.parse(payload.actions?.[0]?.value || '{}');
+    const stateValues = payload.state?.values;
+    const firstKey = stateValues ? Object.keys(stateValues)[0] : undefined;
+    const selectedTimeValue = firstKey && stateValues ? (stateValues[firstKey] as Record<string, { selected_option?: { value?: string } }>)?.meeting_time_selection?.selected_option?.value : undefined;
     
     if (!selectedTimeValue) {
       await client.chat.postEphemeral({
-        channel: payload.channel.id,
+        channel: payload.channel?.id || '',
         user: payload.user.id,
         text: '⚠️ Please select a time slot before confirming the meeting.'
       });
@@ -1212,8 +1202,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
       
       // Update the message to show confirmation
       await client.chat.update({
-        channel: payload.channel.id,
-        ts: payload.message.ts,
+        channel: payload.channel?.id || '',
+        ts: payload.message?.ts || '',
         blocks: [
           {
             type: 'header',
@@ -1254,8 +1244,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
       
       // Fallback - just show the scheduled time without calendar integration
       await client.chat.update({
-        channel: payload.channel.id,
-        ts: payload.message.ts,
+        channel: payload.channel?.id || '',
+        ts: payload.message?.ts || '',
         blocks: [
           {
             type: 'header',
@@ -1286,8 +1276,8 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
   } catch (error) {
     console.error('Error confirming meeting:', error);
     await client.chat.postEphemeral({
-      channel: (body as any).channel.id,
-      user: (body as any).user.id,
+      channel: (body as SlackInteraction).channel?.id || '',
+      user: (body as SlackInteraction).user.id,
       text: '❌ Sorry, there was an error scheduling the meeting. Please try again.'
     });
   }
@@ -1296,12 +1286,12 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
 app.action('skip_meeting', async ({ body, ack, client }) => {
   await ack();
   
-  const payload = body as any;
+  const payload = body as SlackInteraction;
   
   // Update the message to show meeting was skipped
   await client.chat.update({
-    channel: payload.channel.id,
-    ts: payload.message.ts,
+    channel: payload.channel?.id || '',
+    ts: payload.message?.ts || '',
     blocks: [
       {
         type: 'section',
@@ -1406,7 +1396,17 @@ export const handler = async (
   
   // Handle Slack events
   const slackHandler = await awsLambdaReceiver.start();
-  const result = await slackHandler(event, context, callback);
+  
+  // Create a wrapper callback that handles the type mismatch between AWS Lambda and Slack Bolt
+  const slackCallback = (error?: Error | string | null, result?: APIGatewayProxyResult) => {
+    if (typeof error === 'string') {
+      callback(new Error(error), result);
+    } else {
+      callback(error, result);
+    }
+  };
+  
+  const result = await slackHandler(event, context, slackCallback);
   console.log('Handler completed with result:', result?.statusCode);
   return result;
 };

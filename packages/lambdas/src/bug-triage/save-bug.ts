@@ -86,20 +86,16 @@ export const handler: Handler<SaveBugEvent, BugReport> = async (event) => {
     conversations
   };
   
-  try {
-    const command = new PutCommand({
-      TableName: process.env.BUG_REPORTS_TABLE!,
-      Item: bugReportData
-    });
-    await dynamodb.send(command);
-    
-    // Also create engrams for long-term memory
-    await createBugEngram(bugReportData);
-    
-    return bugReportData;
-  } catch (error) {
-    throw error;
-  }
+  const command = new PutCommand({
+    TableName: process.env.BUG_REPORTS_TABLE!,
+    Item: bugReportData
+  });
+  await dynamodb.send(command);
+  
+  // Also create engrams for long-term memory
+  await createBugEngram(bugReportData);
+  
+  return bugReportData;
 };
 
 async function generateNarrativeFromConversation(
@@ -126,7 +122,7 @@ Output a single paragraph narrative description.`;
   const userPrompt = `Initial Report: ${initialReport}
 
 Conversation:
-${conversation.map((pair, i) => 
+${conversation.map((pair) => 
   `Q: ${pair.question}\nA: ${pair.response}`
 ).join('\n\n')}
 
