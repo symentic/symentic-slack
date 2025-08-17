@@ -21,6 +21,16 @@ export interface LambdaFunctions {
   calendarOauthCallback: lambda.Function;
   slackNotify: lambda.Function;
   profileSyncWorkspace: lambda.Function;
+  // Calendar agent functions
+  calendarAnalyzeFunction: lambda.Function;
+  calendarExtractParticipantsFunction: lambda.Function;
+  calendarCheckAvailabilityFunction: lambda.Function;
+  calendarAskConfirmationFunction: lambda.Function;
+  calendarProcessResponseFunction: lambda.Function;
+  calendarCreateEventFunction: lambda.Function;
+  calendarMarkOOOFunction: lambda.Function;
+  calendarSaveEngramsFunction: lambda.Function;
+  calendarNotifyFunction: lambda.Function;
 }
 
 export interface DynamoDBTables {

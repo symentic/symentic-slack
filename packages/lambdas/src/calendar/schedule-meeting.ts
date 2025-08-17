@@ -203,7 +203,7 @@ async function postMeetingConfirmationRequest(
     
     return {
       text: {
-        type: 'mrkdwn',
+        type: 'mrkdwn' as const,
         text: `*${timeStr}* (30 min)\n${availability}`
       },
       value: JSON.stringify({

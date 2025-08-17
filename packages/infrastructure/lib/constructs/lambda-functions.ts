@@ -57,6 +57,16 @@ export class LambdaFunctionsConstruct extends Construct {
       // { name: 'calendarOauthCallback', entry: 'src/calendar/oauth-callback.ts', handler: 'handler' },
       { name: 'slackNotify', entry: 'src/notification/slack.ts', handler: 'handler', memory: 512 },
       { name: 'profileSyncWorkspace', entry: 'src/profile-engram/sync-workspace.ts', handler: 'handler', memory: 512 },
+      // Calendar agent functions
+      { name: 'calendarAnalyzeFunction', entry: 'src/calendar/calendar-analyze.ts', handler: 'handler', memory: 1024 },
+      { name: 'calendarExtractParticipantsFunction', entry: 'src/calendar/calendar-extract-participants.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarCheckAvailabilityFunction', entry: 'src/calendar/calendar-check-availability.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarAskConfirmationFunction', entry: 'src/calendar/calendar-ask-confirmation.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarProcessResponseFunction', entry: 'src/calendar/calendar-process-response.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarCreateEventFunction', entry: 'src/calendar/calendar-create-event.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarMarkOOOFunction', entry: 'src/calendar/calendar-mark-ooo.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarSaveEngramsFunction', entry: 'src/calendar/calendar-save-engrams.ts', handler: 'handler', memory: 512 },
+      { name: 'calendarNotifyFunction', entry: 'src/calendar/calendar-notify.ts', handler: 'handler', memory: 512 },
     ];
 
     // Create Lambda functions

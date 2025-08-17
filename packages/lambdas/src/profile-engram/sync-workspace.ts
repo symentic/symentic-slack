@@ -133,7 +133,7 @@ export const handler: Handler<SyncWorkspaceEvent, SyncResult> = async (event) =>
 };
 
 function shouldUpdateProfile(
-  existingProfile: UserProfile,
+  existingProfile: any,
   slackUser: SlackUserData,
   lastSyncTime?: string
 ): boolean {
@@ -156,12 +156,12 @@ function shouldUpdateProfile(
 async function updateExistingProfile(
   businessId: string,
   slackUser: SlackUserData,
-  existingProfile: UserProfile
+  existingProfile: any
 ): Promise<void> {
   const email = slackUser.profile?.email?.toLowerCase();
   const isFounder = email === 'richxhuang@gmail.com' || email === 'leogao@umich.edu';
   
-  const updates: ProfileUpdate = {
+  const updates: any = {
     name: slackUser.real_name || slackUser.name || existingProfile.name,
     email: slackUser.profile?.email || existingProfile.email,
     role: isFounder ? 'Co-Founder' : (slackUser.profile?.title || existingProfile.role),

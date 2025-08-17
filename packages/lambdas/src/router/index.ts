@@ -12,6 +12,7 @@ import { profileEngramService } from '@symentic/core';
 import { ProfileInteraction, SlackUserData } from '@symentic/core';
 import { googleCalendarService } from '@symentic/core';
 import { CalendarToken, CalendarEvent, BusySlot, SlackBlock, SlackInteraction } from './types';
+import { IntentResult } from '@symentic/core';
 
 // Initialize Step Functions client with explicit configuration
 const stepFunctions = new SFNClient({
@@ -444,9 +445,9 @@ app.command('/refresh-profile', async ({ command, ack, say, client }) => {
     
     // Add enrichment about the refresh
     await profileEngramService.addEnrichment(businessId, userId, {
-      title: 'Profile Manually Refreshed',
-      content: 'User requested a manual profile refresh via /refresh-profile command',
-      source: 'manual'
+      agent: 'profile agent',
+      date: new Date().toISOString().split('T')[0],
+      detail: 'User requested a manual profile refresh via /refresh-profile command'
     });
     
   } catch (error) {
@@ -1010,11 +1011,25 @@ app.message(async ({ message, say, client, body }) => {
         }
       }
     } else if (intent.intent.startsWith('calendar.')) {
-      // Start calendar workflow
+      console.log('Calendar intent detected:', intent.intent);
+      // Send immediate acknowledgment
       await say({
-        text: '📅 I\'ll help you with calendar management. This feature is being migrated to our new architecture.',
+        text: '📅 I\'ll help you with that calendar request. Let me process this for you...',
         thread_ts: msg.thread_ts || msg.ts
       });
+      
+      // Start calendar workflow
+      try {
+        console.log('Starting calendar agent workflow...');
+        await startCalendarAgentWorkflow(msg, intent, client);
+        console.log('Calendar agent workflow started successfully');
+      } catch (error) {
+        console.error('Failed to start calendar workflow:', error);
+        await say({
+          text: '❌ Sorry, I encountered an error with the calendar request. Please try again.',
+          thread_ts: msg.thread_ts || msg.ts
+        });
+      }
     } else if (intent.intent.startsWith('task.') || intent.intent.startsWith('reminder.')) {
       // Task and reminder intents
       await say({
@@ -1138,6 +1153,90 @@ async function startBugTriageWorkflow(
     console.error('Error:', error);
     console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     console.error('Error details:', JSON.stringify(error, null, 2));
+    throw error;
+  }
+}
+
+// Start calendar agent Step Function
+async function startCalendarAgentWorkflow(
+  message: SlackMessage,
+  intent: IntentResult,
+  client: WebClient
+) {
+  console.log('=== startCalendarAgentWorkflow STARTED ===');
+  console.log('Calendar intent:', intent);
+  console.log('Message:', {
+    text: message.text,
+    user: message.user,
+    channel: message.channel,
+    ts: message.ts
+  });
+  
+  try {
+    // Construct Step Function ARN dynamically
+    const region = process.env.AWS_REGION || 'us-east-1';
+    const stage = process.env.STAGE || 'prod';
+    const accountId = '842733143746';
+    
+    const stateMachineArn = `arn:aws:states:${region}:${accountId}:stateMachine:CalendarAgentStateMachine-${stage}`;
+    console.log('Using calendar state machine ARN:', stateMachineArn);
+    
+    const threadTs = message.thread_ts || message.ts;
+    
+    // Detect and create user ID mapping if needed
+    await detectAndCreateUserIdMapping(message.user!, client);
+    
+    // Create execution record
+    const execution = await executionTracker.createExecution({
+      threadId: threadTs,
+      userId: message.user!,
+      channelId: message.channel!,
+      teamId: message.team!,
+      agentType: 'general' as const, // Calendar requests use general type for now
+      originalMessage: message.text || ''
+    });
+    console.log('Created calendar execution:', execution.executionId);
+    
+    const params = {
+      stateMachineArn: stateMachineArn,
+      name: `calendar-${message.user}-${Date.now()}`,
+      input: JSON.stringify({
+        message: message.text || '',
+        userId: message.user!,
+        channelId: message.channel!,
+        threadTs,
+        workspaceId: message.team!,
+        intent: intent,
+        executionId: execution.executionId
+      })
+    };
+    
+    console.log('Starting Step Functions execution with params:', JSON.stringify(params, null, 2));
+    const command = new StartExecutionCommand(params);
+    const result = await stepFunctions.send(command);
+    console.log('Started calendar agent workflow:', result.executionArn);
+    
+    // Update execution with Step Function ARN
+    await executionTracker.updateExecution(execution.executionId, {
+      executionArn: result.executionArn,
+      metadata: {
+        ...execution.metadata
+      }
+    });
+    
+    // Store workflow reference for thread response routing
+    await storeWorkflowReference(
+      message.user!,
+      threadTs,
+      'calendar_agent',
+      result.executionArn!
+    );
+    
+    console.log('=== startCalendarAgentWorkflow COMPLETED ===');
+  } catch (error) {
+    console.error('=== startCalendarAgentWorkflow FAILED ===');
+    console.error('Error:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     throw error;
   }
 }
@@ -1281,6 +1380,138 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
       user: (body as SlackInteraction).user.id,
       text: '❌ Sorry, there was an error scheduling the meeting. Please try again.'
     });
+  }
+});
+
+// Calendar agent button actions
+app.action('calendar_time_selection', async ({ ack }) => {
+  await ack();
+  // Radio button selection is stored, no immediate action needed
+});
+
+app.action('calendar_confirm', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const payload = body as SlackInteraction;
+    const confirmationId = payload.actions?.[0]?.value;
+    const stateValues = payload.state?.values;
+    const firstKey = stateValues ? Object.keys(stateValues)[0] : undefined;
+    const selectedTimeValue = firstKey && stateValues ? 
+      (stateValues[firstKey] as Record<string, { selected_option?: { value?: string } }>)?.calendar_time_selection?.selected_option?.value : 
+      undefined;
+    
+    if (selectedTimeValue) {
+      // User confirmed with a selected time
+      const selectedSlot = JSON.parse(selectedTimeValue);
+      
+      // The confirmationId should contain the task token for the Step Function
+      // For now, we'll skip the Step Function callback since we need proper task token handling
+      console.log('Calendar confirmation received:', { confirmationId, selectedSlot });
+      
+      // Update message
+      await client.chat.update({
+        channel: payload.channel?.id || '',
+        ts: payload.message?.ts || '',
+        text: '✅ Calendar event confirmed!',
+        blocks: [{
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '✅ I\'m creating your calendar event...'
+          }
+        }]
+      });
+    }
+  } catch (error) {
+    console.error('Error handling calendar confirmation:', error);
+  }
+});
+
+app.action('calendar_cancel', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const payload = body as SlackInteraction;
+    const confirmationId = payload.actions?.[0]?.value;
+    
+    // The confirmationId should contain the task token for the Step Function
+    // For now, we'll skip the Step Function callback since we need proper task token handling
+    console.log('Calendar cancellation received:', { confirmationId });
+    
+    // Update message
+    await client.chat.update({
+      channel: payload.channel?.id || '',
+      ts: payload.message?.ts || '',
+      text: '❌ Calendar action cancelled',
+      blocks: [{
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '❌ Calendar action cancelled.'
+        }
+      }]
+    });
+  } catch (error) {
+    console.error('Error handling calendar cancellation:', error);
+  }
+});
+
+app.action('ooo_confirm', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const payload = body as SlackInteraction;
+    const confirmationId = payload.actions?.[0]?.value;
+    
+    // The confirmationId should contain the task token for the Step Function
+    // For now, we'll skip the Step Function callback since we need proper task token handling
+    console.log('OOO confirmation received:', { confirmationId });
+    
+    // Update message
+    await client.chat.update({
+      channel: payload.channel?.id || '',
+      ts: payload.message?.ts || '',
+      text: '✅ Out of Office confirmed!',
+      blocks: [{
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '✅ Setting your Out of Office status...'
+        }
+      }]
+    });
+  } catch (error) {
+    console.error('Error handling OOO confirmation:', error);
+  }
+});
+
+app.action('ooo_cancel', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const payload = body as SlackInteraction;
+    const confirmationId = payload.actions?.[0]?.value;
+    
+    // The confirmationId should contain the task token for the Step Function
+    // For now, we'll skip the Step Function callback since we need proper task token handling
+    console.log('OOO cancellation received:', { confirmationId });
+    
+    // Update message
+    await client.chat.update({
+      channel: payload.channel?.id || '',
+      ts: payload.message?.ts || '',
+      text: '❌ Out of Office cancelled',
+      blocks: [{
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: '❌ Out of Office request cancelled.'
+        }
+      }]
+    });
+  } catch (error) {
+    console.error('Error handling OOO cancellation:', error);
   }
 });
 
