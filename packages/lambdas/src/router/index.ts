@@ -589,6 +589,13 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
       } catch (error) {
         console.error('Error accessing calendar:', error);
         calendarError = error instanceof Error ? error.message : 'Unknown error';
+        
+        // Check for invalid_grant error specifically
+        if (calendarError.includes('invalid_grant')) {
+          calendarError = 'invalid_grant - Your refresh token has been revoked or expired.';
+          // Mark the token as invalid
+          hasRefreshToken = false;
+        }
       }
     }
     
@@ -661,6 +668,31 @@ app.command('/calendar-status', async ({ command, ack, say }) => {
           text: `*API Error:* ${calendarError}`
         }
       });
+      
+      // If it's an invalid_grant error, provide reconnection instructions
+      if (calendarError.includes('invalid_grant')) {
+        blocks.push({
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '*🔄 To fix this:*\n1. Go to https://myaccount.google.com/permissions\n2. Find "Symentic Slack Bot" and remove it\n3. Use `/connect-calendar` to reconnect'
+          }
+        });
+        blocks.push({
+          type: 'actions',
+          elements: [
+            {
+              type: 'button',
+              text: {
+                type: 'plain_text',
+                text: 'Reconnect Calendar'
+              },
+              action_id: 'reconnect_calendar',
+              style: 'primary'
+            } as any
+          ]
+        });
+      }
     }
     
     // Add upcoming events if we got them
@@ -1288,14 +1320,36 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
     try {
       const { googleCalendarService } = await import('@symentic/core');
       
-      // Create meeting for the user who clicked confirm
-      const { getUserEmail } = await import('@symentic/core');
-      const attendeeEmails = buttonValue.engineers.map((userId: string) => getUserEmail(userId));
+      // Get the engineers from the button value
+      const engineers = buttonValue.engineers || [];
+      
+      // Get user emails for all participants
+      const participants = [];
+      
+      // Add the organizer
+      participants.push({
+        userId: payload.user.id,
+        name: payload.user.name || payload.user.id,
+        email: undefined // Will be resolved by calendar service
+      });
+      
+      // Add other engineers
+      for (const engineerId of engineers) {
+        if (engineerId !== payload.user.id) {
+          participants.push({
+            userId: engineerId,
+            name: engineerId,
+            email: undefined // Will be resolved by calendar service
+          });
+        }
+      }
+      
+      // Create meeting using the organizer's calendar
       const calendarEvent = await googleCalendarService.createMeeting(
-        payload.user.id,
-        attendeeEmails,
-        `Bug Triage: ${selectedTime.bugId}`,
-        `Bug triage meeting for ${selectedTime.bugId}`,
+        payload.user.id, // Organizer's user ID
+        engineers.filter((id: string) => id !== payload.user.id), // Other participants' user IDs
+        `Bug Triage: ${selectedTime.bugId || 'Meeting'}`,
+        `Bug triage meeting scheduled via Symentic`,
         meetingStart,
         new Date(selectedTime.end)
       );
@@ -1366,7 +1420,7 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
                 minute: '2-digit',
                 timeZone: userTimezone,
                 timeZoneName: 'short'
-              })}\n*Duration:* 30 minutes\n\n_Please add this to your calendar manually._`
+              })}\n*Duration:* 30 minutes\n\n_Calendar integration unavailable. Please add this to your calendar manually._`
             }
           }
         ],
@@ -1379,6 +1433,75 @@ app.action('confirm_meeting', async ({ body, ack, client }) => {
       channel: (body as SlackInteraction).channel?.id || '',
       user: (body as SlackInteraction).user.id,
       text: '❌ Sorry, there was an error scheduling the meeting. Please try again.'
+    });
+  }
+});
+
+// Handle reconnect calendar button
+app.action('reconnect_calendar', async ({ body, ack, client }) => {
+  await ack();
+  
+  try {
+    const userId = (body as SlackInteraction).user.id;
+    
+    // Generate auth URL for the user
+    const authUrl = await googleCalendarService.getAuthUrl(userId);
+    
+    // Send DM with reconnection link
+    await client.chat.postMessage({
+      channel: userId,
+      text: '📅 Reconnect Your Google Calendar',
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '*📅 Reconnect Your Google Calendar*\n\nYour previous calendar connection has expired or been revoked. Let\'s reconnect it!\n\n*Before clicking the link:*\n1. Go to https://myaccount.google.com/permissions\n2. Find "Symentic Slack Bot" and remove it (if present)\n3. Then click the link below to reconnect'
+          }
+        },
+        {
+          type: 'divider'
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: `<${authUrl}|🔗 Connect Google Calendar>`
+          }
+        },
+        {
+          type: 'context',
+          elements: [
+            {
+              type: 'mrkdwn',
+              text: '_After authorizing, you\'ll be redirected to complete the connection._'
+            }
+          ]
+        }
+      ]
+    });
+    
+    // Update the original message
+    await client.chat.update({
+      channel: (body as SlackInteraction).channel?.id || '',
+      ts: (body as SlackInteraction).message?.ts || '',
+      text: '✅ Check your DMs for the calendar reconnection link!',
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text: '✅ *I\'ve sent you a direct message with instructions to reconnect your calendar.*\n\nPlease check your DMs and follow the link to reconnect.'
+          }
+        }
+      ]
+    });
+  } catch (error) {
+    console.error('Error handling reconnect calendar:', error);
+    await client.chat.postEphemeral({
+      channel: (body as SlackInteraction).channel?.id || '',
+      user: (body as SlackInteraction).user.id,
+      text: '❌ Sorry, there was an error generating the reconnection link. Please try using `/connect-calendar` instead.'
     });
   }
 });

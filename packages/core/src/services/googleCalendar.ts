@@ -467,13 +467,30 @@ export class GoogleCalendarService {
 
   async createMeeting(
     organizerId: string,
-    attendeeEmails: string[],
+    attendeeUserIdsOrEmails: string[],
     summary: string,
     description: string,
     startTime: Date,
     endTime: Date
   ): Promise<{ eventId: string; eventLink: string }> {
     const calendar = await this.getCalendarClient(organizerId);
+
+    // Process attendees - they could be user IDs or emails
+    const attendees = [];
+    for (const attendee of attendeeUserIdsOrEmails) {
+      // If it looks like an email, use it directly
+      if (attendee.includes('@')) {
+        attendees.push({ email: attendee });
+      } else if (attendee.startsWith('U')) {
+        // It's a Slack user ID - try to get their calendar
+        // For now, we'll skip adding them as attendees since we don't have their email
+        // In the future, we could look up their email from Slack API or user profile
+        console.log(`Skipping user ${attendee} - no email address available`);
+      } else {
+        // Unknown format, skip
+        console.log(`Skipping unknown attendee format: ${attendee}`);
+      }
+    }
 
     const event = {
       summary,
@@ -486,7 +503,7 @@ export class GoogleCalendarService {
         dateTime: endTime.toISOString(),
         timeZone: 'America/New_York',
       },
-      attendees: attendeeEmails.map(email => ({ email })),
+      attendees,
       conferenceData: {
         createRequest: {
           requestId: `symentic-${Date.now()}`,
@@ -535,7 +552,7 @@ export class GoogleCalendarService {
 
   // Check availability for multiple participants
   async checkAvailability(
-    participantEmails: string[],
+    participantUserIds: string[],
     proposedTime: string,
     duration: number = 60
   ): Promise<{
@@ -548,11 +565,10 @@ export class GoogleCalendarService {
 
     const conflicts: Array<{ email: string; conflict: string }> = [];
 
-    for (const email of participantEmails) {
+    for (const userId of participantUserIds) {
       try {
-        // Note: In production, you'd need to map emails to userIds
-        // For now, we'll use email as userId placeholder
-        const calendar = await this.getCalendarClient(email);
+        // Use userId directly - tokens are stored by Slack user ID
+        const calendar = await this.getCalendarClient(userId);
         
         const response = await calendar.freebusy.query({
           requestBody: {
@@ -565,15 +581,15 @@ export class GoogleCalendarService {
         const busy = response.data.calendars?.primary?.busy || [];
         if (busy.length > 0) {
           conflicts.push({
-            email,
+            email: userId,
             conflict: `Busy from ${busy[0].start} to ${busy[0].end}`
           });
         }
       } catch (error) {
-        console.error(`Failed to check availability for ${email}:`, error);
+        console.error(`Failed to check availability for ${userId}:`, error);
         // Assume unavailable if we can't check
         conflicts.push({
-          email,
+          email: userId,
           conflict: 'Unable to check availability'
         });
       }
@@ -587,7 +603,7 @@ export class GoogleCalendarService {
 
   // Find alternative meeting times
   async findAlternativeTimes(
-    participantEmails: string[],
+    participantUserIds: string[],
     originalTime: string,
     duration: number = 60,
     alternatives: number = 3
@@ -626,7 +642,7 @@ export class GoogleCalendarService {
       if (day === 0 || day === 6) continue;
 
       const availability = await this.checkAvailability(
-        participantEmails,
+        participantUserIds,
         slot.toISOString(),
         duration
       );
